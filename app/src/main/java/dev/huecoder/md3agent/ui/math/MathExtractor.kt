@@ -44,9 +44,15 @@ object MathExtractor {
 
         private fun fenceAt(index: Int): String? {
             if (index > 0 && source[index - 1] != '\n') return null
-            val indent = source.drop(index).takeWhile { it == ' ' }.length
+            val indent = runLength(index, ' ')
             if (indent > MAX_FENCE_INDENT) return null
             return FENCES.firstOrNull { source.startsWith(it, index + indent) }
+        }
+
+        private fun runLength(from: Int, char: Char): Int {
+            var end = from
+            while (end < source.length && source[end] == char) end++
+            return end - from
         }
 
         private fun copyFencedBlock(fence: String) {
@@ -61,7 +67,7 @@ object MathExtractor {
         }
 
         private fun copyCodeSpan() {
-            val ticks = source.drop(cursor).takeWhile { it == BACKTICK }.length
+            val ticks = runLength(cursor, BACKTICK)
             val marker = BACKTICK.toString().repeat(ticks)
             val close = source.indexOf(marker, cursor + ticks)
             copy(if (close < 0) ticks else close + ticks - cursor)

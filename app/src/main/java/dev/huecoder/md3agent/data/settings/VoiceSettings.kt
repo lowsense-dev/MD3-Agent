@@ -61,9 +61,21 @@ data class VoiceSettings(
     val speakReplies: SpeakReplies = SpeakReplies.AFTER_VOICE_INPUT,
     val speechOutput: SpeechOutput = SpeechOutput.SYSTEM,
     val invokeInput: InvokeInput = InvokeInput.TEXT,
+    val transcriptionChatProviderId: String? = null,
+    val transcriptionChatModel: String = "",
 ) {
     val transcriptionProvider: VoiceProvider?
         get() = providers.firstOrNull { it.id == activeProviderId } ?: providers.firstOrNull()
+
+    fun transcriptionChatProvider(chatProviders: List<ProviderProfile>): ProviderProfile? =
+        chatProviders.firstOrNull { it.id == transcriptionChatProviderId && transcribes(it) }
+
+    fun transcriptionTarget(chatProviders: List<ProviderProfile>): Pair<ProviderProfile, String>? {
+        transcriptionChatProvider(chatProviders)?.let { chat ->
+            return chat to transcriptionChatModel.trim().ifEmpty { VoiceProvider.defaultTranscriptionModel(chat.format) }
+        }
+        return transcriptionProvider?.let { it.asEndpointProfile() to it.transcriptionModel }
+    }
 
     val speechProvider: VoiceProvider?
         get() = providers.firstOrNull { it.id == speechProviderId } ?: transcriptionProvider
@@ -73,5 +85,9 @@ data class VoiceSettings(
             ?: speechProvider.takeIf { speechOutput == SpeechOutput.PROVIDER }
             ?: return null
         return if (choice.voiceId.isBlank()) provider else provider.copy(speechVoice = choice.voiceId, speechVoiceName = choice.voiceName)
+    }
+
+    companion object {
+        fun transcribes(provider: ProviderProfile) = provider.format == ApiFormat.OPENAI || provider.format == ApiFormat.GEMINI
     }
 }

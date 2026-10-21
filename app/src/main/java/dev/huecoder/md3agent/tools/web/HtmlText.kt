@@ -2,7 +2,7 @@ package dev.huecoder.md3agent.tools.web
 
 object HtmlText {
     private val invisibleBlocks = Regex(
-        "<(script|style|noscript|svg|template|head|nav|footer|form)\\b[^>]*>[\\s\\S]*?</\\1\\s*>",
+        "<(script|style|noscript|svg|template|head|nav|footer)\\b[^>]*>[\\s\\S]*?</\\1\\s*>",
         RegexOption.IGNORE_CASE,
     )
     private val comments = Regex("<!--[\\s\\S]*?-->")

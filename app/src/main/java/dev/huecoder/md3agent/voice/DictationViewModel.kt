@@ -112,9 +112,9 @@ class DictationViewModel(
     }
 
     private suspend fun transcribe(audio: File): String {
-        val voice = settings.current().voice
-        val provider = voice.transcriptionProvider ?: throw NoSpeechProviderException()
-        return transcriber.transcribe(provider.asEndpointProfile(), provider.transcriptionModel, voice.language, audio, VoiceRecorder.MIME_TYPE)
+        val current = settings.current()
+        val (provider, model) = current.voice.transcriptionTarget(current.providers) ?: throw NoSpeechProviderException()
+        return transcriber.transcribe(provider, model, current.voice.language, audio, VoiceRecorder.MIME_TYPE)
     }
 
     override fun onCleared() {

@@ -5,10 +5,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class ScrollSearchTest {
-    private class FakeList(private val size: Int, private val target: Int, private var top: Int = 0, private val windowSize: Int = 3, private val breaksAfter: Int = Int.MAX_VALUE) {
+    private class FakeList(private val size: Int, private val target: Int, private var top: Int = 0, private val windowSize: Int = 3, private val breaksAfter: Int = Int.MAX_VALUE, private val ticking: Boolean = false) {
         var swipes = 0
+        private var ticks = 0L
         val visible: Boolean get() = target in top until top + windowSize
-        val fingerprint: Long get() = top.toLong()
+        val fingerprint: Long get() = if (ticking) ++ticks else top.toLong()
 
         fun scroll(direction: SwipeDirection): Boolean {
             if (swipes >= breaksAfter) return false
@@ -70,5 +71,12 @@ class ScrollSearchTest {
         val list = FakeList(size = 50, target = 40, breaksAfter = 3)
 
         assertEquals(SearchOutcome.GestureFailed(3), search(list).run(listOf(SwipeDirection.DOWN), maxSwipes = 30))
+    }
+
+    @Test
+    fun `moving content does not use up the whole budget on the first direction`() = runTest {
+        val list = FakeList(size = 10, target = 4, top = 5, ticking = true)
+
+        assertEquals(SearchOutcome.Found(5 + 3), search(list).run(listOf(SwipeDirection.DOWN, SwipeDirection.UP), maxSwipes = 10))
     }
 }

@@ -16,6 +16,13 @@ data class ChatTurn(
     val reasoning: ReasoningTrace? = null,
 ) {
     enum class Role(val wireName: String) { SYSTEM("system"), USER("user"), ASSISTANT("assistant"), TOOL("tool") }
+
+    val isToolOutput: Boolean
+        get() = role == Role.TOOL || (role == Role.USER && content == TOOL_IMAGES_NOTE)
+
+    companion object {
+        const val TOOL_IMAGES_NOTE = "Images returned by the tool calls above."
+    }
 }
 
 @Serializable

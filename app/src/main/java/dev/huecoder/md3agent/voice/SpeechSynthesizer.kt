@@ -172,7 +172,7 @@ class ProviderSpeechSynthesizer(
         if (speech !is PreparedSpeech.Audio) return
         try {
             suspendCancellableCoroutine { continuation ->
-                val media = MediaPlayer().apply {
+                val media = MediaPlayer().also { player = it }.apply {
                     setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
                     setDataSource(speech.file.absolutePath)
                     setOnCompletionListener { if (continuation.isActive) continuation.resume(Unit) }
@@ -180,7 +180,6 @@ class ProviderSpeechSynthesizer(
                     prepare()
                     start()
                 }
-                player = media
                 continuation.invokeOnCancellation { media.stop() }
             }
         } finally {

@@ -1,5 +1,6 @@
 package dev.huecoder.md3agent.tools.web
 
+import dev.huecoder.md3agent.data.settings.FirecrawlSettings
 import dev.huecoder.md3agent.data.settings.SearchBackend
 import dev.huecoder.md3agent.data.settings.SearchSettings
 import dev.huecoder.md3agent.net.HttpClientProvider
@@ -25,12 +26,14 @@ data class SearchResults(val query: String, val results: List<SearchHit>)
 
 class WebSearcher(private val httpClients: HttpClientProvider) {
     private val json = Json { ignoreUnknownKeys = true }
+    private val firecrawl = Firecrawl(httpClients)
 
-    suspend fun search(query: String, count: Int, settings: SearchSettings): List<SearchHit> {
+    suspend fun search(query: String, count: Int, settings: SearchSettings, firecrawlSettings: FirecrawlSettings = FirecrawlSettings()): List<SearchHit> {
         val hits = when (settings.backend) {
             SearchBackend.HTML_SCRAPE -> scrapeHtml(query)
             SearchBackend.SEARXNG -> searxng(query, settings)
             SearchBackend.BRAVE_API -> braveApi(query, settings)
+            SearchBackend.FIRECRAWL -> firecrawl.search(query, count, firecrawlSettings)
         }
         return hits.distinctBy { it.url }.take(count)
     }
@@ -110,8 +113,8 @@ object DuckDuckGoHtml {
         )
     }
 
-    private fun unwrapRedirect(link: String): String {
+    private fun unwrapRedirect(link: String): String? {
         val encoded = link.substringAfter("uddg=", missingDelimiterValue = "").substringBefore('&')
-        return if (encoded.isEmpty()) link else URLDecoder.decode(encoded, Charsets.UTF_8.name())
+        return if (encoded.isEmpty()) link else runCatching { URLDecoder.decode(encoded, Charsets.UTF_8.name()) }.getOrNull()
     }
 }

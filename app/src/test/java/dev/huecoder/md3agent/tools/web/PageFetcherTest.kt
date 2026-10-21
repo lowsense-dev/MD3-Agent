@@ -9,10 +9,15 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
+import dev.huecoder.md3agent.tools.ToolArgumentException
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
+import java.net.InetAddress
 import org.junit.Before
 import org.junit.Test
 
@@ -62,5 +67,20 @@ class PageFetcherTest {
 
         assertEquals("Hi", result.title)
         assertEquals("One\nTwo", result.text)
+    }
+
+    @Test
+    fun `direct reading refuses local network addresses`() = runTest {
+        respond("secret")
+        try {
+            fetcher.fetch(server.url("/admin"), FetchSettings(FetchBackend.DIRECT))
+            fail("local address was fetched")
+        } catch (e: ToolArgumentException) {
+            assertEquals(0, server.requestCount)
+        }
+        listOf("127.0.0.1", "10.1.2.3", "192.168.1.5", "169.254.169.254", "0.0.0.0", "::1", "fd00::1", "fe80::1").forEach {
+            assertTrue(it, PageFetcher.isLocalAddress(InetAddress.getByName(it)))
+        }
+        assertFalse(PageFetcher.isLocalAddress(InetAddress.getByName("93.184.215.14")))
     }
 }

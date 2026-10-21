@@ -3,6 +3,7 @@ package dev.huecoder.md3agent.tools.memory
 import dev.huecoder.md3agent.data.db.MemoryEntity
 import dev.huecoder.md3agent.data.db.MemoryTier
 import dev.huecoder.md3agent.data.memory.MemoryStore
+import dev.huecoder.md3agent.data.settings.ToolPermission
 import dev.huecoder.md3agent.data.settings.ToolSettings
 import dev.huecoder.md3agent.llm.ToolSpec
 import dev.huecoder.md3agent.tools.Tool
@@ -14,6 +15,7 @@ import dev.huecoder.md3agent.tools.optionalInt
 import dev.huecoder.md3agent.tools.optionalString
 import dev.huecoder.md3agent.tools.requireString
 import dev.huecoder.md3agent.tools.stringProperty
+import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.JsonPrimitive
@@ -53,7 +55,10 @@ private suspend fun guarded(block: suspend () -> ToolOutcome): ToolOutcome = try
     ToolOutcome.error(e.message.orEmpty())
 }
 
-class MemorySaveTool(private val store: MemoryStore) : Tool {
+class MemoryAddTool(private val store: MemoryStore) : Tool {
+    // Instant memories land in every future system prompt, so a web page or screen text must not be able to plant one unasked.
+    override val defaultPermission = ToolPermission.ASK
+
     override val spec = ToolSpec(
         name = NAME,
         description = "Saves a fact to memory so you remember it in future chats. Use \"$INSTANT\" for important preferences and " +
@@ -78,11 +83,45 @@ class MemorySaveTool(private val store: MemoryStore) : Tool {
     }
 
     companion object {
-        const val NAME = "memory_save"
+        const val NAME = "memory_add"
+    }
+}
+
+class MemoryListTool(private val store: MemoryStore) : Tool {
+    override val spec = ToolSpec(
+        name = NAME,
+        description = "Lists saved memories with their ids, newest first within each tier. Long contents are shortened; " +
+            "use ${MemorySearchTool.NAME} to find something specific.",
+        parameters = objectSchema(required = emptyList()) {
+            tierProperty("Only list this tier, both tiers by default")
+            integerProperty("limit", "How many memories to return", minimum = 1, maximum = MAX_LIMIT)
+        },
+    )
+
+    override suspend fun execute(arguments: JsonObject, settings: ToolSettings): ToolOutcome {
+        val tier = parseTier(arguments.optionalString("tier"))
+        val limit = (arguments.optionalInt("limit") ?: DEFAULT_LIMIT).coerceIn(1, MAX_LIMIT)
+        val memories = store.all.first().filter { tier == null || it.tier == tier }
+        if (memories.isEmpty()) return ToolOutcome("No memories saved.")
+        val shown = memories.take(limit).map { it.copy(content = it.content.shortened()).describe() }
+        val more = if (memories.size > limit) listOf("${memories.size - limit} more not shown, raise limit to see them.") else emptyList()
+        return ToolOutcome((listOf("${memories.size} memories:") + shown + more).joinToString("\n"))
+    }
+
+    private fun String.shortened() = if (length <= PREVIEW_CHARS) this else take(PREVIEW_CHARS).trimEnd() + "…"
+
+    companion object {
+        const val NAME = "memory_list"
+        private const val DEFAULT_LIMIT = 50
+        private const val MAX_LIMIT = 200
+        private const val PREVIEW_CHARS = 200
     }
 }
 
 class MemoryUpdateTool(private val store: MemoryStore) : Tool {
+    // Instant memories land in every future system prompt, so a web page or screen text must not be able to plant one unasked.
+    override val defaultPermission = ToolPermission.ASK
+
     override val spec = ToolSpec(
         name = NAME,
         description = "Edits a saved memory by its id: rewrite the title or content, or move it between tiers.",

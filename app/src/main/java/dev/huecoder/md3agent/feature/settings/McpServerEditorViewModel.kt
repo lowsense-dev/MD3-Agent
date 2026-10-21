@@ -21,7 +21,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 data class McpServerForm(
     val id: String,
@@ -34,10 +33,10 @@ data class McpServerForm(
     val oauth: McpOAuthSession? = null,
 ) {
     val urlError: UiText?
-        get() = if (url.isBlank() || url.trim().toHttpUrlOrNull() != null) null else UiText.Resource(R.string.mcp_url_invalid)
+        get() = endpointUrlError(url, carriesSecrets = apiKey.isNotBlank() || oauth != null || headers.any { it.name.isNotBlank() }, R.string.mcp_url_invalid)
 
     val canSave: Boolean
-        get() = name.isNotBlank() && url.isNotBlank() && urlError == null
+        get() = name.isNotBlank() && url.isNotBlank() && urlError == null && HeaderRules.allValid(headers)
 
     fun toServer() = McpServer(
         id = id,
@@ -119,7 +118,9 @@ class McpServerEditorViewModel(
             draft.edit { it.copy(oauth = null) }
         } else {
             draft.applyPersisted { it.copy(oauth = null) }
-            viewModelScope.launch { persist(form.toServer().copy(oauth = null)) }
+            viewModelScope.launch {
+                settings.updateTools { tools -> tools.copy(mcpServers = tools.mcpServers.map { if (it.id == form.id) it.copy(oauth = null) else it }) }
+            }
         }
     }
 
@@ -149,7 +150,7 @@ class McpServerEditorViewModel(
     fun save(onSaved: () -> Unit) {
         val server = draft.current?.takeIf { it.canSave }?.toServer() ?: return
         viewModelScope.launch {
-            persist(server)
+            if (!persist(server)) return@launch
             draft.markSaved()
             onSaved()
         }
@@ -161,9 +162,9 @@ class McpServerEditorViewModel(
     }
 
     fun delete(onDeleted: () -> Unit) {
-        val id = serverId ?: return onDeleted()
+        val id = draft.current?.takeUnless { it.isNew }?.id ?: return onDeleted()
         viewModelScope.launch {
-            settings.updateTools { tools -> tools.copy(mcpServers = tools.mcpServers.filterNot { it.id == id }) }
+            if (!settings.updateTools { tools -> tools.copy(mcpServers = tools.mcpServers.filterNot { it.id == id }) }) return@launch
             onDeleted()
         }
     }

@@ -125,6 +125,35 @@ class ChatCompletionClientTest {
     }
 
     @Test
+    fun `a trailing slash after the endpoint path is dropped too`() = runTest {
+        server.enqueue(sse("[DONE]"))
+        server.enqueue(sse("[DONE]"))
+
+        client.stream(provider(server.url("/v1/chat/completions/").toString()), "m", turns).toList()
+        client.stream(provider(server.url("/v1/models/").toString()), "m", turns).toList()
+
+        assertEquals("/v1/chat/completions", server.takeRequest().url.encodedPath)
+        assertEquals("/v1/chat/completions", server.takeRequest().url.encodedPath)
+    }
+
+    @Test(expected = ProviderException.InvalidConfiguration::class)
+    fun `a header value that http cannot carry is a configuration error`() = runTest {
+        client.stream(provider().copy(extraHeaders = listOf(HeaderEntry("X-Title", "Mój agent"))), "m", turns).toList()
+    }
+
+    @Test
+    fun `a rate limited key hands the request to the next key`() = runTest {
+        server.enqueue(MockResponse.Builder().code(429).body("""{"error":{"message":"slow down"}}""").build())
+        server.enqueue(sse("""{"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}""", "[DONE]"))
+
+        val events = client.stream(provider().copy(id = "rotating", apiKey = "k1\n k2 \n"), "m", turns).toList()
+
+        assertEquals(CompletionEvent.ContentDelta("ok"), events.first())
+        assertEquals("Bearer k1", server.takeRequest().headers["Authorization"])
+        assertEquals("Bearer k2", server.takeRequest().headers["Authorization"])
+    }
+
+    @Test
     fun `stream without finish reason still ends with Finished`() = runTest {
         server.enqueue(sse("""{"choices":[{"delta":{"content":"a"}}]}"""))
 
@@ -210,6 +239,22 @@ class ChatCompletionClientTest {
         val delta = client.stream(provider(), "m", turns).toList().filterIsInstance<CompletionEvent.ToolCallDelta>().single()
 
         assertEquals(CompletionEvent.ToolCallDelta(index = 0, id = "a", name = "x", arguments = """{"k":1}"""), delta)
+    }
+
+    @Test
+    fun `index-less calls streamed in separate chunks stay separate`() = runTest {
+        server.enqueue(
+            sse(
+                """{"choices":[{"delta":{"tool_calls":[{"id":"a","function":{"name":"x","arguments":"{\"n\":"}}]}}]}""",
+                """{"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"1}"}}]}}]}""",
+                """{"choices":[{"delta":{"tool_calls":[{"id":"b","function":{"name":"y","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}""",
+            ),
+        )
+
+        val accumulator = ToolCallAccumulator()
+        client.stream(provider(), "m", turns).toList().filterIsInstance<CompletionEvent.ToolCallDelta>().forEach(accumulator::add)
+
+        assertEquals(listOf(ToolCall("a", "x", """{"n":1}"""), ToolCall("b", "y", "{}")), accumulator.calls())
     }
 
     @Test

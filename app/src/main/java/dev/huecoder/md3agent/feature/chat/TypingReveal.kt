@@ -19,6 +19,7 @@ import com.mikepenz.markdown.model.markdownAnnotator
 import com.mikepenz.markdown.model.parseMarkdown
 import dev.huecoder.md3agent.data.settings.TypingMode
 import dev.huecoder.md3agent.data.settings.TypingStyle
+import dev.huecoder.md3agent.ui.math.MathExtractor
 import dev.huecoder.md3agent.ui.math.rememberMathContent
 import dev.huecoder.md3agent.ui.pictures.MarkdownBlocks
 import kotlinx.coroutines.flow.first
@@ -37,7 +38,7 @@ fun ReplyText(text: String, isStreaming: Boolean, style: TypingStyle, modifier: 
     val math = rememberMathContent(text)
     val revealed = math.markdown
     val frontier = rememberRevealFrontier(revealed, style.charsPerSecond, tail, isRunning = !isStopped)
-    val shown = if (isStopped) revealed else revealed.substring(0, cuts.floor(revealed, ceil(frontier).toInt()))
+    val shown = if (isStopped) revealed else revealed.substring(0, visibleCut(revealed, cuts.floor(revealed, ceil(frontier).toInt()), fades = tail > 0))
     val blocks = remember(shown) { MarkdownBlocks.split(shown) }
     val color = MaterialTheme.colorScheme.onSurface
     MarkdownBlocksContent(blocks, math, modifier) { block ->
@@ -91,6 +92,24 @@ private fun fadeAnnotator(frontier: Float, tail: Int, color: Color, cuts: Graphe
     true
 }
 
+/**
+ * Where to cut the text that is laid out this frame. With a fade the text past the frontier is fully transparent, so the
+ * cut can jump to the end of the word: the blocks are split and parsed once per word instead of every frame.
+ */
+internal fun visibleCut(text: String, cut: Int, fades: Boolean): Int = outsideMathSlot(text, if (fades) wordEnd(text, cut) else cut)
+
+internal fun wordEnd(text: String, cut: Int): Int {
+    if (cut <= 0 || cut >= text.length || text[cut - 1].isWhitespace()) return cut
+    val limit = minOf(text.length, cut + MAX_WORD_LOOKAHEAD)
+    for (index in cut until limit) if (text[index].isWhitespace()) return index
+    return cut
+}
+
+internal fun outsideMathSlot(text: String, cut: Int): Int {
+    val slot = MathExtractor.slotPattern.findAll(text).firstOrNull { it.range.last >= cut } ?: return cut
+    return if (slot.range.first < cut) slot.range.last + 1 else cut
+}
+
 private val TypingStyle.fadeTailChars: Int
     get() = if (mode == TypingMode.FADE) (charsPerSecond * FADE_SECONDS).toInt().coerceAtLeast(MIN_FADE_TAIL) else 0
 
@@ -99,3 +118,5 @@ private const val MAX_LAG_SECONDS = 1.5f
 private const val CATCH_UP_PER_SECOND = 3f
 private const val FADE_SECONDS = 0.4f
 private const val MIN_FADE_TAIL = 8
+// Long tokens (links, code) still reveal steadily instead of waiting for their end.
+private const val MAX_WORD_LOOKAHEAD = 24

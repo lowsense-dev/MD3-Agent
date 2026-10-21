@@ -52,6 +52,7 @@ class ReplySpeaker(private val scope: CoroutineScope, private val synthesizerFac
         private val prepared = Channel<PreparedSpeech>(PREFETCH) { (it as? PreparedSpeech.Audio)?.file?.delete() }
         private var synthesizer: SpeechSynthesizer? = null
         private val job: Job = scope.launch {
+            var failed = false
             try {
                 val engine = synthesizerFactory().also { synthesizer = it }
                 coroutineScope {
@@ -69,8 +70,9 @@ class ReplySpeaker(private val scope: CoroutineScope, private val synthesizerFac
             } catch (e: Exception) {
                 Log.w(TAG, "Speaking a reply failed", e)
                 _failures.trySend(e.message ?: e.javaClass.simpleName)
+                failed = true
             } finally {
-                end()
+                end(failed)
             }
         }
 
@@ -85,10 +87,13 @@ class ReplySpeaker(private val scope: CoroutineScope, private val synthesizerFac
             synthesizer?.release()
         }
 
-        private fun end() {
+        private fun end(failed: Boolean) {
             synthesizer?.release()
+            synthesizer = null
+            texts.close()
             if (session === this) {
-                session = null
+                // a failed reply stays as its session so later stream updates do not start it over
+                if (!failed) session = null
                 _speakingId.value = null
             }
         }

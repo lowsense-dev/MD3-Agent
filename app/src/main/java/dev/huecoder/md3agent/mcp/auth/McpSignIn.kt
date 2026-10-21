@@ -28,7 +28,7 @@ class McpSignIn(private val oauth: McpOAuth, private val settings: SettingsRepos
             val authServer = oauth.discover(server.url, resourceMetadataUrl)
             val client = oauth.register(authServer, REDIRECT_URI, CLIENT_NAME)
             val pkce = Pkce.create()
-            val state = UUID.randomUUID().toString()
+            val state = "${server.id}$STATE_SEPARATOR${UUID.randomUUID()}"
             pending.set(PendingSignIn(server.id, authServer, client, pkce, state))
             oauth.authorizationUrl(authServer, client, REDIRECT_URI, pkce, state)
         } catch (e: IOException) {
@@ -40,9 +40,14 @@ class McpSignIn(private val oauth: McpOAuth, private val settings: SettingsRepos
     fun isCallback(uri: Uri?): Boolean = uri?.scheme == REDIRECT_SCHEME && uri.host == REDIRECT_HOST
 
     suspend fun complete(uri: Uri) {
-        val signIn = pending.getAndSet(null) ?: return
+        val state = uri.getQueryParameter("state")
+        val signIn = pending.get()
+        if (signIn == null) {
+            state?.substringBefore(STATE_SEPARATOR)?.let { _status.value = SignInStatus.Failed(it, "The sign-in was interrupted, try again") }
+            return
+        }
+        if (state != signIn.state || !pending.compareAndSet(signIn, null)) return
         val failure = when {
-            uri.getQueryParameter("state") != signIn.state -> "The sign-in reply does not match the request, try again"
             uri.getQueryParameter("error") != null -> uri.getQueryParameter("error_description") ?: uri.getQueryParameter("error")
             uri.getQueryParameter("code") == null -> "The sign-in reply has no code"
             else -> null
@@ -73,5 +78,6 @@ class McpSignIn(private val oauth: McpOAuth, private val settings: SettingsRepos
         private const val REDIRECT_HOST = "oauth"
         private const val REDIRECT_URI = "$REDIRECT_SCHEME://$REDIRECT_HOST/callback"
         private const val CLIENT_NAME = "MD3 Agent"
+        private const val STATE_SEPARATOR = '.'
     }
 }

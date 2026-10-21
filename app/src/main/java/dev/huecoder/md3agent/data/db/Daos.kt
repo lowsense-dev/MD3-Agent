@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
@@ -55,6 +56,15 @@ interface ChatDao {
 
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insert(chat: ChatEntity)
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertMessages(messages: List<MessageEntity>)
+
+    @Transaction
+    suspend fun insertWithMessages(chat: ChatEntity, messages: List<MessageEntity>) {
+        insert(chat)
+        insertMessages(messages)
+    }
 
     @Query("UPDATE chats SET title = :title WHERE id = :id")
     suspend fun rename(id: String, title: String)
@@ -127,6 +137,17 @@ interface ChatDao {
         """,
     )
     suspend fun searchMessages(query: String, limit: Int): List<MessageHit>
+
+    @Query(
+        """
+        SELECT m.id AS messageId, m.chatId, c.title AS chatTitle, m.role, m.createdAt, m.content
+        FROM messages m JOIN chats c ON c.id = m.chatId
+        WHERE c.trashedAt IS NULL AND m.role IN ('USER', 'ASSISTANT') AND m.content != ''
+        ORDER BY m.createdAt DESC
+        LIMIT :limit OFFSET :offset
+        """,
+    )
+    suspend fun searchableMessages(limit: Int, offset: Int): List<MessageHit>
 }
 
 @Dao
@@ -154,6 +175,9 @@ interface MessageDao {
 
     @Upsert
     suspend fun upsert(message: MessageEntity)
+
+    @Query("SELECT MAX(createdAt) FROM messages WHERE chatId = :chatId")
+    suspend fun latestCreatedAt(chatId: String): Long?
 
     @Query("DELETE FROM messages WHERE chatId = :chatId AND createdAt >= :fromCreatedAt")
     suspend fun deleteFrom(chatId: String, fromCreatedAt: Long)

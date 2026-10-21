@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Handle Assist</string>
+    <string name="module_description">Choose what long-pressing the gesture bar and the power key does instead of Breeno</string>
+
+    <string name="status_active">Module is active</string>
+    <string name="status_active_hint">Changes apply on the next press</string>
+    <string name="status_inactive">Module is not active</string>
+    <string name="status_inactive_hint">Enable Handle Assist in LSPosed with System framework and System UI, then reboot</string>
+
+    <string name="trigger_handle">Hold the gesture bar</string>
+    <string name="trigger_power">Hold the power key</string>
+
+    <string name="action_assistant">Default assistant</string>
+    <string name="action_assistant_hint">The app chosen as digital assistant</string>
+    <string name="action_circle_search">Circle to Search</string>
+    <string name="action_circle_search_hint">Search anything on screen with Google</string>
+    <string name="action_app">Open an app</string>
+    <string name="action_app_hint">Tap to pick an app</string>
+    <string name="action_power_menu">Power menu</string>
+    <string name="action_power_menu_hint">Restart, power off, SOS</string>
+    <string name="action_stock_handle">System default</string>
+    <string name="action_stock_handle_hint">Breeno screen recognition</string>
+    <string name="action_stock_power">System default</string>
+    <string name="action_stock_power_hint">Breeno voice</string>
+    <string name="action_none">Do nothing</string>
+    <string name="action_none_hint">Ignore the long-press</string>
+
+    <string name="picker_title">Pick an app</string>
+    <string name="picker_search">Search apps</string>
+</resources>

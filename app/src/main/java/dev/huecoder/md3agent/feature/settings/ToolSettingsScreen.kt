@@ -37,6 +37,7 @@ import dev.huecoder.md3agent.App
 import dev.huecoder.md3agent.R
 import dev.huecoder.md3agent.data.settings.FetchBackend
 import dev.huecoder.md3agent.data.settings.FetchSettings
+import dev.huecoder.md3agent.data.settings.FirecrawlSettings
 import dev.huecoder.md3agent.data.settings.SearchBackend
 import dev.huecoder.md3agent.data.settings.SearchSettings
 import dev.huecoder.md3agent.data.settings.ToolPermission
@@ -60,6 +61,8 @@ import dev.huecoder.md3agent.ui.components.ToolCategory
 import dev.huecoder.md3agent.ui.components.ToolInfo
 import dev.huecoder.md3agent.ui.text.asString
 import kotlinx.coroutines.launch
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 @Composable
 fun ToolSettingsScreen(onBack: () -> Unit) {
@@ -72,9 +75,12 @@ fun ToolSettingsScreen(onBack: () -> Unit) {
 
     val save = tools?.let { current ->
         val draft = current.trimmed()
-        SaveAction(isDirty = draft != saved, canSave = current.search.isComplete() && current.fetch.isComplete()) {
+        SaveAction(isDirty = draft != saved, canSave = current.search.isComplete(current.firecrawl) && current.fetch.isComplete(current.firecrawl)) {
             scope.launch {
-                container.settings.updateTools { persisted -> draft.copy(access = persisted.access, phoneUse = persisted.phoneUse) }
+                val written = container.settings.updateTools { persisted ->
+                    draft.copy(access = persisted.access, phoneUse = persisted.phoneUse, mcpServers = persisted.mcpServers, memory = persisted.memory)
+                }
+                if (!written) return@launch
                 saved = draft
                 onBack()
             }
@@ -104,10 +110,10 @@ fun ToolSettingsScreen(onBack: () -> Unit) {
                 ) { category ->
                     if (category == ToolCategory.WEB) {
                         ServiceCard(R.string.tools_section_search, Modifier.padding(top = 12.dp)) {
-                            SearchSection(current.search) { tools = current.copy(search = it) }
+                            SearchSection(current.search, current.firecrawl, { tools = current.copy(firecrawl = it) }) { tools = current.copy(search = it) }
                         }
                         ServiceCard(R.string.tools_section_fetch) {
-                            FetchSection(current.fetch) { tools = current.copy(fetch = it) }
+                            FetchSection(current.fetch, current.firecrawl, { tools = current.copy(firecrawl = it) }) { tools = current.copy(fetch = it) }
                         }
                         ServiceCard(R.string.tools_weather_title) {
                             WeatherSection(current.weather) { tools = current.copy(weather = it) }
@@ -130,7 +136,12 @@ private fun ServiceCard(@StringRes title: Int, modifier: Modifier = Modifier, co
 }
 
 @Composable
-private fun SearchSection(search: SearchSettings, onChange: (SearchSettings) -> Unit) {
+private fun SearchSection(
+    search: SearchSettings,
+    firecrawl: FirecrawlSettings,
+    onFirecrawlChange: (FirecrawlSettings) -> Unit,
+    onChange: (SearchSettings) -> Unit,
+) {
     val backends = SearchBackend.entries
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
@@ -161,12 +172,18 @@ private fun SearchSection(search: SearchSettings, onChange: (SearchSettings) -> 
                 visualTransformation = PasswordVisualTransformation(),
                 modifier = Modifier.fillMaxWidth(),
             )
+            SearchBackend.FIRECRAWL -> FirecrawlFields(firecrawl, onFirecrawlChange)
         }
     }
 }
 
 @Composable
-private fun FetchSection(fetch: FetchSettings, onChange: (FetchSettings) -> Unit) {
+private fun FetchSection(
+    fetch: FetchSettings,
+    firecrawl: FirecrawlSettings,
+    onFirecrawlChange: (FirecrawlSettings) -> Unit,
+    onChange: (FetchSettings) -> Unit,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SegmentedChoices(FETCH_CHOICES, fetch.backend, onSelect = { onChange(fetch.copy(backend = it)) })
         Text(stringResource(fetch.backend.hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -184,8 +201,28 @@ private fun FetchSection(fetch: FetchSettings, onChange: (FetchSettings) -> Unit
                 )
                 SecretField(fetch.customApiKey) { onChange(fetch.copy(customApiKey = it)) }
             }
+            FetchBackend.FIRECRAWL -> FirecrawlFields(firecrawl, onFirecrawlChange)
         }
     }
+}
+
+@Composable
+private fun FirecrawlFields(firecrawl: FirecrawlSettings, onChange: (FirecrawlSettings) -> Unit) {
+    FormField(
+        value = firecrawl.baseUrl,
+        onValueChange = { onChange(firecrawl.copy(baseUrl = it)) },
+        label = stringResource(R.string.tools_firecrawl_url),
+        placeholder = stringResource(R.string.tools_firecrawl_url_placeholder),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+        modifier = Modifier.fillMaxWidth(),
+    )
+    FormField(
+        value = firecrawl.apiKey,
+        onValueChange = { onChange(firecrawl.copy(apiKey = it)) },
+        label = stringResource(R.string.tools_firecrawl_api_key),
+        visualTransformation = PasswordVisualTransformation(),
+        modifier = Modifier.fillMaxWidth(),
+    )
 }
 
 @Composable
@@ -203,6 +240,7 @@ private val FETCH_CHOICES = listOf(
     Choice(FetchBackend.DIRECT, R.string.tools_fetch_backend_direct),
     Choice(FetchBackend.JINA_READER, R.string.tools_fetch_backend_jina),
     Choice(FetchBackend.CUSTOM, R.string.tools_fetch_backend_custom),
+    Choice(FetchBackend.FIRECRAWL, R.string.tools_backend_firecrawl),
 )
 
 @get:StringRes
@@ -211,9 +249,19 @@ private val FetchBackend.hint: Int
         FetchBackend.DIRECT -> R.string.tools_fetch_backend_direct_hint
         FetchBackend.JINA_READER -> R.string.tools_fetch_backend_jina_hint
         FetchBackend.CUSTOM -> R.string.tools_fetch_backend_custom_hint
+        FetchBackend.FIRECRAWL -> R.string.tools_fetch_backend_firecrawl_hint
     }
 
-private fun FetchSettings.isComplete(): Boolean = backend != FetchBackend.CUSTOM || customUrl.isNotBlank()
+private fun FetchSettings.isComplete(firecrawl: FirecrawlSettings): Boolean = when (backend) {
+    FetchBackend.CUSTOM -> customUrl.isNotBlank()
+    FetchBackend.FIRECRAWL -> firecrawl.isComplete()
+    else -> true
+}
+
+private fun FirecrawlSettings.isComplete(): Boolean {
+    val url = baseUrl.trim().toHttpUrlOrNull() ?: return false
+    return apiKey.isNotBlank() || url.host != FirecrawlSettings.DEFAULT_BASE_URL.toHttpUrl().host
+}
 
 @Composable
 private fun WeatherSection(weather: WeatherSettings, onChange: (WeatherSettings) -> Unit) {
@@ -246,6 +294,7 @@ private val SearchBackend.label: Int
         SearchBackend.HTML_SCRAPE -> R.string.tools_search_backend_html
         SearchBackend.SEARXNG -> R.string.tools_search_backend_searxng
         SearchBackend.BRAVE_API -> R.string.tools_search_backend_brave
+        SearchBackend.FIRECRAWL -> R.string.tools_backend_firecrawl
     }
 
 @get:StringRes
@@ -254,17 +303,20 @@ private val SearchBackend.hint: Int
         SearchBackend.HTML_SCRAPE -> R.string.tools_search_backend_html_hint
         SearchBackend.SEARXNG -> R.string.tools_search_backend_searxng_hint
         SearchBackend.BRAVE_API -> R.string.tools_search_backend_brave_hint
+        SearchBackend.FIRECRAWL -> R.string.tools_search_backend_firecrawl_hint
     }
 
-private fun SearchSettings.isComplete(): Boolean = when (backend) {
+private fun SearchSettings.isComplete(firecrawl: FirecrawlSettings): Boolean = when (backend) {
     SearchBackend.HTML_SCRAPE -> true
     SearchBackend.SEARXNG -> searxngUrl.isNotBlank()
     SearchBackend.BRAVE_API -> apiKey.isNotBlank()
+    SearchBackend.FIRECRAWL -> firecrawl.isComplete()
 }
 
 private fun ToolSettings.trimmed() = copy(
     search = search.copy(searxngUrl = search.searxngUrl.trim(), apiKey = search.apiKey.trim()),
     weather = weather.copy(forecastUrl = weather.forecastUrl.trim(), geocodingUrl = weather.geocodingUrl.trim()),
     fetch = fetch.copy(jinaApiKey = fetch.jinaApiKey.trim(), customUrl = fetch.customUrl.trim(), customApiKey = fetch.customApiKey.trim()),
+    firecrawl = firecrawl.copy(baseUrl = firecrawl.baseUrl.trim(), apiKey = firecrawl.apiKey.trim()),
 )
 

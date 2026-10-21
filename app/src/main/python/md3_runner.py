@@ -8,6 +8,9 @@ import traceback
 
 import phone
 
+# No display on a phone: matplotlib renders to files (savefig) instead of trying to open a window.
+os.environ.setdefault("MPLBACKEND", "Agg")
+
 POLL_SECONDS = 0.05
 GRACE_SECONDS = 2
 

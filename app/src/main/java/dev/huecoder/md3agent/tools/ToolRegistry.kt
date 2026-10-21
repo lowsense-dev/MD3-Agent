@@ -13,6 +13,11 @@ import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import java.io.IOException
+import java.net.ProtocolException
+import java.net.SocketException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
+import javax.net.ssl.SSLException
 
 interface ToolSource {
     fun tools(): List<Tool>
@@ -58,7 +63,7 @@ class ToolRegistry(private val builtIn: List<Tool>, private val sources: List<To
         } catch (e: HttpStatusException) {
             ToolOutcome.error("Service responded with an error: ${e.message}")
         } catch (e: IOException) {
-            ToolOutcome.error("Network error: ${e.message ?: e.javaClass.simpleName}")
+            ToolOutcome.error("${if (e.isNetworkError()) "Network error" else "I/O error"}: ${e.message ?: e.javaClass.simpleName}")
         } catch (e: SerializationException) {
             ToolOutcome.error("Service returned an unexpected response: ${e.message}")
         } catch (e: IllegalStateException) {
@@ -74,6 +79,9 @@ class ToolRegistry(private val builtIn: List<Tool>, private val sources: List<To
     private fun connected(): List<Tool> = sources.flatMap { it.tools() }
 
     fun find(name: String): Tool? = builtInByName[name] ?: connected().firstOrNull { it.spec.name == name }
+
+    private fun IOException.isNetworkError(): Boolean =
+        this is SocketException || this is UnknownHostException || this is SocketTimeoutException || this is SSLException || this is ProtocolException
 
     private fun parseArguments(raw: String): JsonObject? =
         runCatching { json.parseToJsonElement(raw.ifBlank { "{}" }) as? JsonObject }.getOrNull()

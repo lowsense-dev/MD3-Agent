@@ -11,7 +11,10 @@ import dev.huecoder.md3agent.llm.models.ReasoningEffort
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -21,7 +24,6 @@ import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
-import java.security.GeneralSecurityException
 import java.util.UUID
 
 private val Context.settingsStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
@@ -44,6 +46,11 @@ class SettingsRepository(
         .distinctUntilChanged()
         .shareIn(scope, SharingStarted.Eagerly, replay = 1)
 
+    private val _writeFailures = MutableSharedFlow<SettingsWriteException>(extraBufferCapacity = 4)
+
+    /** Writes refused because the stored value is unreadable; the app shows these so a skipped save is never silent. */
+    val writeFailures: SharedFlow<SettingsWriteException> = _writeFailures.asSharedFlow()
+
     val networkSettings: Flow<NetworkSettings> = settings.map { it.network }.distinctUntilChanged()
 
     val phonePanel: Flow<PhonePanelState> = store.data
@@ -52,12 +59,15 @@ class SettingsRepository(
 
     suspend fun current(): AppSettings = withContext(Dispatchers.Default) { toAppSettings(store.data.first()) }
 
-    suspend fun upsertProvider(provider: ProviderProfile) = editProviders { providers ->
-        val index = providers.indexOfFirst { it.id == provider.id }
-        if (index == -1) providers + provider else providers.toMutableList().also { it[index] = provider }
+    // Writes return false when they were refused (see readable); the reason is also published on writeFailures.
+    suspend fun upsertProvider(provider: ProviderProfile): Boolean = write {
+        editProviders { providers ->
+            val index = providers.indexOfFirst { it.id == provider.id }
+            if (index == -1) providers + provider else providers.toMutableList().also { it[index] = provider }
+        }
     }
 
-    suspend fun deleteProvider(providerId: String) {
+    suspend fun deleteProvider(providerId: String): Boolean = write {
         editProviders { providers -> providers.filterNot { it.id == providerId } }
         store.edit { prefs ->
             if (prefs[Keys.ACTIVE_PROVIDER] == providerId) {
@@ -67,55 +77,89 @@ class SettingsRepository(
         }
     }
 
-    suspend fun setActiveSelection(selection: ModelSelection) = store.edit { prefs ->
-        prefs[Keys.ACTIVE_PROVIDER] = selection.providerId
-        prefs[Keys.ACTIVE_MODEL] = selection.modelId
-        val effort = selection.reasoningEffort
-        if (effort == null) prefs.remove(Keys.ACTIVE_REASONING) else prefs[Keys.ACTIVE_REASONING] = effort.wireName
+    suspend fun setActiveSelection(selection: ModelSelection): Boolean = write {
+        store.edit { prefs ->
+            prefs[Keys.ACTIVE_PROVIDER] = selection.providerId
+            prefs[Keys.ACTIVE_MODEL] = selection.modelId
+            val effort = selection.reasoningEffort
+            if (effort == null) prefs.remove(Keys.ACTIVE_REASONING) else prefs[Keys.ACTIVE_REASONING] = effort.wireName
+        }
     }
 
-    suspend fun updateAgents(transform: (AgentSettings) -> AgentSettings) = store.edit { prefs ->
-        prefs[Keys.AGENTS] = json.encodeToString(AgentSettings.serializer(), transform(decodeAgents(prefs)))
-        prefs.remove(Keys.LEGACY_AGENT)
+    suspend fun updateAgents(transform: (AgentSettings) -> AgentSettings): Boolean = write {
+        store.edit { prefs ->
+            prefs[Keys.AGENTS] = json.encodeToString(AgentSettings.serializer(), transform(decodeAgents(prefs, strict = true)))
+            prefs.remove(Keys.LEGACY_AGENT)
+        }
     }
 
-    suspend fun updateNetwork(network: NetworkSettings) = store.edit { prefs ->
-        prefs[Keys.NETWORK] = json.encodeToString(NetworkSettings.serializer(), network)
+    suspend fun updateNetwork(network: NetworkSettings): Boolean = write {
+        store.edit { prefs -> prefs[Keys.NETWORK] = json.encodeToString(NetworkSettings.serializer(), network) }
     }
 
-    suspend fun updateTools(transform: (ToolSettings) -> ToolSettings) = store.edit { prefs ->
-        val updated = transform(decodeTools(prefs[Keys.TOOLS_ENCRYPTED]))
-        prefs[Keys.TOOLS_ENCRYPTED] = cipher.encrypt(json.encodeToString(ToolSettings.serializer(), updated))
+    suspend fun updateTools(transform: (ToolSettings) -> ToolSettings): Boolean = write {
+        store.edit { prefs ->
+            val current = readable("Tool settings") { storedTools(prefs[Keys.TOOLS_ENCRYPTED]) }
+            prefs[Keys.TOOLS_ENCRYPTED] = cipher.encrypt(json.encodeToString(ToolSettings.serializer(), transform(current)))
+        }
     }
 
-    suspend fun updateChat(transform: (ChatSettings) -> ChatSettings) = store.edit { prefs ->
-        val current = decodeOrDefault(prefs[Keys.CHAT], ChatSettings.serializer(), ChatSettings())
-        prefs[Keys.CHAT] = json.encodeToString(ChatSettings.serializer(), transform(current))
+    suspend fun updateChat(transform: (ChatSettings) -> ChatSettings): Boolean = write {
+        store.edit { prefs ->
+            val current = decodeStrict(prefs[Keys.CHAT], ChatSettings.serializer(), ChatSettings())
+            prefs[Keys.CHAT] = json.encodeToString(ChatSettings.serializer(), transform(current))
+        }
     }
 
-    suspend fun updateInterface(transform: (InterfaceSettings) -> InterfaceSettings) = store.edit { prefs ->
-        val current = decodeOrDefault(prefs[Keys.INTERFACE], InterfaceSettings.serializer(), InterfaceSettings())
-        prefs[Keys.INTERFACE] = json.encodeToString(InterfaceSettings.serializer(), transform(current))
+    suspend fun updateInterface(transform: (InterfaceSettings) -> InterfaceSettings): Boolean = write {
+        store.edit { prefs ->
+            val current = decodeStrict(prefs[Keys.INTERFACE], InterfaceSettings.serializer(), InterfaceSettings())
+            prefs[Keys.INTERFACE] = json.encodeToString(InterfaceSettings.serializer(), transform(current))
+        }
     }
 
-    suspend fun updateVoice(transform: (VoiceSettings) -> VoiceSettings) = store.edit { prefs ->
-        val updated = transform(decodeVoice(prefs))
-        prefs[Keys.VOICE_ENCRYPTED] = cipher.encrypt(json.encodeToString(VoiceSettings.serializer(), updated))
-        prefs.remove(Keys.LEGACY_SPEECH)
+    suspend fun updateVoice(transform: (VoiceSettings) -> VoiceSettings): Boolean = write {
+        store.edit { prefs ->
+            val current = readable("Voice settings") {
+                storedVoice(prefs, storedProviders(prefs[Keys.PROVIDERS_ENCRYPTED]), prefs[Keys.ACTIVE_PROVIDER])
+            }
+            prefs[Keys.VOICE_ENCRYPTED] = cipher.encrypt(json.encodeToString(VoiceSettings.serializer(), transform(current)))
+            prefs.remove(Keys.LEGACY_SPEECH)
+        }
     }
 
-    suspend fun updatePhonePanel(transform: (PhonePanelState) -> PhonePanelState) = store.edit { prefs ->
-        val current = decodeOrDefault(prefs[Keys.PHONE_PANEL], PhonePanelState.serializer(), PhonePanelState())
-        prefs[Keys.PHONE_PANEL] = json.encodeToString(PhonePanelState.serializer(), transform(current))
+    suspend fun updatePhonePanel(transform: (PhonePanelState) -> PhonePanelState): Boolean = write {
+        store.edit { prefs ->
+            val current = decodeStrict(prefs[Keys.PHONE_PANEL], PhonePanelState.serializer(), PhonePanelState())
+            prefs[Keys.PHONE_PANEL] = json.encodeToString(PhonePanelState.serializer(), transform(current))
+        }
     }
 
     fun newProviderId(): String = UUID.randomUUID().toString()
 
     private suspend fun editProviders(transform: (List<ProviderProfile>) -> List<ProviderProfile>) {
         store.edit { prefs ->
-            val updated = transform(decodeProviders(prefs[Keys.PROVIDERS_ENCRYPTED]))
-            prefs[Keys.PROVIDERS_ENCRYPTED] = cipher.encrypt(json.encodeToString(providerListSerializer, updated))
+            val current = readable("Provider profiles") { storedProviders(prefs[Keys.PROVIDERS_ENCRYPTED]) }
+            prefs[Keys.PROVIDERS_ENCRYPTED] = cipher.encrypt(json.encodeToString(providerListSerializer, transform(current)))
         }
+    }
+
+    private suspend fun write(edit: suspend () -> Unit): Boolean = try {
+        edit()
+        true
+    } catch (e: SettingsWriteException) {
+        Log.e(TAG, e.message, e)
+        _writeFailures.tryEmit(e)
+        false
+    }
+
+    /** A write must start from what is actually stored; if that cannot be read, refuse rather than overwrite it with defaults. */
+    private fun <T> readable(what: String, read: () -> T): T = try {
+        read()
+    } catch (e: SettingsWriteException) {
+        throw e
+    } catch (e: Exception) {
+        throw SettingsWriteException("$what could not be read, so nothing was saved", e)
     }
 
     private fun toAppSettings(prefs: Preferences): AppSettings {
@@ -139,55 +183,56 @@ class SettingsRepository(
         )
     }
 
-    private fun decodeProviders(encrypted: String?): List<ProviderProfile> {
-        if (encrypted == null) return emptyList()
-        return try {
-            providersCache.of(encrypted) { json.decodeFromString(providerListSerializer, cipher.decrypt(it)) }
-        } catch (e: GeneralSecurityException) {
-            Log.e(TAG, "Provider profiles could not be decrypted, starting empty", e)
-            emptyList()
-        } catch (e: SerializationException) {
-            Log.e(TAG, "Provider profiles are corrupted, starting empty", e)
-            emptyList()
-        }
-    }
+    private fun decodeProviders(encrypted: String?): List<ProviderProfile> =
+        decryptedOrNull("Provider profiles could not be read, showing none") { storedProviders(encrypted) } ?: emptyList()
 
-    private fun decodeVoice(
-        prefs: Preferences,
-        providers: List<ProviderProfile> = decodeProviders(prefs[Keys.PROVIDERS_ENCRYPTED]),
-        activeProviderId: String? = prefs[Keys.ACTIVE_PROVIDER],
-    ): VoiceSettings {
+    // The stored* readers throw on unreadable data (and cache only successes): reads fall back to defaults, writes refuse.
+    private fun storedProviders(encrypted: String?): List<ProviderProfile> =
+        if (encrypted == null) emptyList() else providersCache.of(encrypted) { decodeStrict(cipher.decrypt(it), providerListSerializer, emptyList()) }
+
+    private fun decodeVoice(prefs: Preferences, providers: List<ProviderProfile>, activeProviderId: String?): VoiceSettings =
+        decryptedOrNull("Voice settings could not be read, using defaults") { storedVoice(prefs, providers, activeProviderId) } ?: VoiceSettings()
+
+    private fun storedVoice(prefs: Preferences, providers: List<ProviderProfile>, activeProviderId: String?): VoiceSettings {
         val encrypted = prefs[Keys.VOICE_ENCRYPTED]
         if (encrypted == null) {
             val legacy = prefs[Keys.LEGACY_SPEECH] ?: return VoiceSettings()
             return LegacySpeechMigration.toVoice(
-                decodeOrDefault(legacy, LegacySpeechSettings.serializer(), LegacySpeechSettings()),
+                decodeStrict(legacy, LegacySpeechSettings.serializer(), LegacySpeechSettings()),
                 providers,
                 activeProviderId,
             )
         }
-        return try {
-            voiceCache.of(encrypted) { decodeOrDefault(cipher.decrypt(it), VoiceSettings.serializer(), VoiceSettings()) }
-        } catch (e: GeneralSecurityException) {
-            Log.e(TAG, "Voice settings could not be decrypted, using defaults", e)
-            VoiceSettings()
-        }
+        return voiceCache.of(encrypted) { decodeStrict(cipher.decrypt(it), VoiceSettings.serializer(), VoiceSettings()) }
     }
 
-    private fun decodeAgents(prefs: Preferences): AgentSettings {
+    private fun decodeAgents(prefs: Preferences, strict: Boolean = false): AgentSettings {
+        fun <T> decode(raw: String, serializer: KSerializer<T>, default: T) = if (strict) decodeStrict(raw, serializer, default) else decodeOrDefault(raw, serializer, default)
         val stored = prefs[Keys.AGENTS]
-        if (stored != null) return decodeOrDefault(stored, AgentSettings.serializer(), AgentSettings()).takeIf { it.agents.isNotEmpty() } ?: AgentSettings()
+        if (stored != null) return decode(stored, AgentSettings.serializer(), AgentSettings()).takeIf { it.agents.isNotEmpty() } ?: AgentSettings()
         val legacy = prefs[Keys.LEGACY_AGENT] ?: return AgentSettings()
-        return decodeOrDefault(legacy, LegacyAgentProfile.serializer(), LegacyAgentProfile()).toAgents()
+        return decode(legacy, LegacyAgentProfile.serializer(), LegacyAgentProfile()).toAgents()
     }
 
-    private fun decodeTools(encrypted: String?): ToolSettings {
-        if (encrypted == null) return ToolSettings()
+    private fun decodeTools(encrypted: String?): ToolSettings =
+        decryptedOrNull("Tool settings could not be read, using defaults") { storedTools(encrypted) } ?: ToolSettings()
+
+    private fun storedTools(encrypted: String?): ToolSettings =
+        if (encrypted == null) ToolSettings() else toolsCache.of(encrypted) { decodeStrict(cipher.decrypt(it), ToolSettings.serializer(), ToolSettings()).migrated() }
+
+    private fun <T> decryptedOrNull(failure: String, decode: () -> T): T? = try {
+        decode()
+    } catch (e: Exception) {
+        Log.e(TAG, failure, e)
+        null
+    }
+
+    private fun <T> decodeStrict(raw: String?, serializer: KSerializer<T>, default: T): T {
+        if (raw == null) return default
         return try {
-            toolsCache.of(encrypted) { decodeOrDefault(cipher.decrypt(it), ToolSettings.serializer(), ToolSettings()).migrated() }
-        } catch (e: GeneralSecurityException) {
-            Log.e(TAG, "Tool settings could not be decrypted, using defaults", e)
-            ToolSettings()
+            json.decodeFromString(serializer, raw)
+        } catch (e: SerializationException) {
+            throw SettingsWriteException("Setting ${serializer.descriptor.serialName} is unreadable, so nothing was saved", e)
         }
     }
 

@@ -6,6 +6,8 @@ import okhttp3.Callback
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import okio.BufferedSink
+import okio.BufferedSource
 import okio.buffer
 import okio.sink
 import java.io.File
@@ -42,12 +44,15 @@ suspend fun OkHttpClient.fetchText(request: Request, maxChars: Int = DEFAULT_MAX
         )
     }
 
-private fun readCapped(response: Response): String {
-    val source = response.body.source()
-    source.request(READ_LIMIT_BYTES)
+private fun readCapped(response: Response): String = response.bodyText(READ_LIMIT_BYTES)
+
+/** At most [limitBytes] of the body as text, so a huge error page or a hostile server cannot exhaust memory. */
+internal fun Response.bodyText(limitBytes: Long): String {
+    val source = body.source()
+    source.request(limitBytes)
     val buffer = source.buffer
-    val bytes = minOf(buffer.size, READ_LIMIT_BYTES)
-    return buffer.readString(bytes, response.body.contentType()?.charset() ?: Charsets.UTF_8)
+    val bytes = minOf(buffer.size, limitBytes)
+    return buffer.readString(bytes, body.contentType()?.charset() ?: Charsets.UTF_8)
 }
 
 private const val DEFAULT_MAX_CHARS = 200_000
@@ -68,16 +73,30 @@ suspend fun OkHttpClient.fetchToFile(request: Request, target: File, maxBytes: L
                     val outcome = runCatching {
                         response.use {
                             if (!it.isSuccessful) throw HttpStatusException(it.code, readCapped(it).take(ERROR_EXCERPT_CHARS))
-                            val length = it.body.contentLength()
-                            if (length > maxBytes) throw IOException("Response is larger than $maxBytes bytes")
-                            target.sink().buffer().use { sink -> sink.writeAll(it.body.source()) }
+                            if (it.body.contentLength() > maxBytes) throw IOException("Response is larger than $maxBytes bytes")
+                            target.sink().buffer().use { sink -> copyCapped(it.body.source(), sink, maxBytes) }
                             target
                         }
                     }
-                    outcome.fold(continuation::resume) { continuation.resumeWithException(it) }
+                    outcome.fold(continuation::resume) {
+                        target.delete()
+                        continuation.resumeWithException(it)
+                    }
                 }
             },
         )
     }
 
+private fun copyCapped(source: BufferedSource, sink: BufferedSink, maxBytes: Long) {
+    var total = 0L
+    while (true) {
+        val read = source.read(sink.buffer, COPY_CHUNK_BYTES)
+        if (read == -1L) return
+        total += read
+        if (total > maxBytes) throw IOException("Response is larger than $maxBytes bytes")
+        sink.emitCompleteSegments()
+    }
+}
+
+private const val COPY_CHUNK_BYTES = 64L * 1024
 private const val DEFAULT_MAX_FILE_BYTES = 32L * 1024 * 1024

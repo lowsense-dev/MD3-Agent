@@ -1,5 +1,6 @@
 package dev.huecoder.md3agent.llm.models
 
+import dev.huecoder.md3agent.llm.TokenUsage
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -39,12 +40,27 @@ data class ModelInfo(
     val reasoningEfforts: List<ReasoningEffort> = emptyList(),
     val reasoningControl: ReasoningControl? = null,
     val toolUse: Boolean? = null,
+    val price: ModelPrice? = null,
 ) {
     val family: ModelFamily? get() = ModelFamily.detect(id)
+
+    /** Tokens the model accepts per request: what the catalog reported, else the known window of its model line. */
+    val contextWindow: Int? get() = contextLength?.takeIf { it > 0 } ?: ModelHeuristics.contextWindow(id)
 
     val displayName: String get() = name?.substringAfter(": ")?.takeIf { it.isNotBlank() } ?: id.substringAfterLast('/')
 
     val traits: ModelTraits get() = ModelTraits.of(this)
+}
+
+// USD per token; every wire format counts cached tokens inside promptTokens.
+@Serializable
+data class ModelPrice(val prompt: Double, val completion: Double, val cacheRead: Double? = null) {
+    fun cost(usage: TokenUsage): Double = cost(usage.promptTokens.toLong(), usage.completionTokens.toLong(), usage.cachedTokens.toLong())
+
+    fun cost(promptTokens: Long, completionTokens: Long, cachedTokens: Long): Double {
+        val cached = cachedTokens.coerceIn(0, promptTokens)
+        return (promptTokens - cached) * prompt + cached * (cacheRead ?: prompt) + completionTokens * completion
+    }
 }
 
 data class ModelTraits(

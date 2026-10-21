@@ -28,9 +28,14 @@ object TurnAssembler {
 
     fun assemble(
         systemPrompt: String,
-        history: List<MessageEntity>,
+        fullHistory: List<MessageEntity>,
         attachments: Map<String, AttachmentContent>,
     ): List<ChatTurn> {
+        // After a compaction the model gets the summary in place of everything before it.
+        val history = Compaction.activeHistory(fullHistory)
+        val summary = Compaction.latestSummary(fullHistory)
+        @Suppress("NAME_SHADOWING")
+        val systemPrompt = if (summary == null) systemPrompt else "$systemPrompt\n\n${Compaction.SUMMARY_HEADER}\n$summary"
         val answeredCallIds = history.filter { it.role == MessageRole.TOOL }.mapNotNullTo(HashSet()) { it.toolCallId }
         val keptCallIds = HashSet<String>()
         val turns = mutableListOf(ChatTurn(ChatTurn.Role.SYSTEM, systemPrompt))
@@ -39,7 +44,7 @@ object TurnAssembler {
 
         fun flushToolImages() {
             if (toolImages.isEmpty()) return
-            turns += ChatTurn(ChatTurn.Role.USER, TOOL_IMAGES_NOTE, imageUrls = toolImages.toList())
+            turns += ChatTurn(ChatTurn.Role.USER, ChatTurn.TOOL_IMAGES_NOTE, imageUrls = toolImages.toList())
             toolImages.clear()
         }
 
@@ -53,7 +58,7 @@ object TurnAssembler {
                     val calls = decodeToolCalls(message.toolCallsJson).filter { it.id in answeredCallIds }
                     keptCallIds += calls.map { it.id }
                     val text = if (message.status == MessageStatus.ERROR) "" else message.content
-                    val trace = decodeTrace(message.reasoningTraceJson).takeIf { calls.isNotEmpty() && position >= currentLoopStart }
+                    val trace = if (calls.isNotEmpty() && position >= currentLoopStart) decodeTrace(message.reasoningTraceJson) else null
                     if (text.isNotBlank() || calls.isNotEmpty()) turns += ChatTurn(ChatTurn.Role.ASSISTANT, text, toolCalls = calls, reasoning = trace)
                 }
                 MessageRole.TOOL -> if (message.toolCallId in keptCallIds) {
@@ -103,7 +108,6 @@ object TurnAssembler {
         )
     }
 
-    private const val TOOL_IMAGES_NOTE = "Images returned by the tool calls above."
     private const val CONTEXT_OPEN = "<context>"
     private const val CONTEXT_CLOSE = "</context>"
 }

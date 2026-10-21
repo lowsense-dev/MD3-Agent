@@ -33,10 +33,12 @@ import com.composables.icons.materialsymbols.rounded.Notifications_active
 import com.composables.icons.materialsymbols.rounded.Extension
 import com.composables.icons.materialsymbols.rounded.Touch_app
 import com.composables.icons.materialsymbols.rounded.Info
+import com.composables.icons.materialsymbols.rounded.Bar_chart
 import com.composables.icons.materialsymbols.rounded.Palette
 import com.composables.icons.materialsymbols.rounded.Chevron_right
 import com.composables.icons.materialsymbols.rounded.Dns
 import com.composables.icons.materialsymbols.rounded.Face
+import com.composables.icons.materialsymbols.rounded.Forum
 import com.composables.icons.materialsymbols.rounded.Handyman
 import com.composables.icons.materialsymbols.rounded.Shield_person
 import com.composables.icons.materialsymbols.rounded.Hub
@@ -62,6 +64,7 @@ import kotlinx.coroutines.flow.map
 data class SettingsDestinations(
     val models: () -> Unit,
     val appearance: () -> Unit,
+    val chat: () -> Unit,
     val about: () -> Unit,
     val agent: () -> Unit,
     val memory: () -> Unit,
@@ -72,6 +75,7 @@ data class SettingsDestinations(
     val access: () -> Unit,
     val phoneUse: () -> Unit,
     val mcp: () -> Unit,
+    val statistics: () -> Unit,
 )
 
 @Composable
@@ -93,6 +97,12 @@ fun SettingsScreen(destinations: SettingsDestinations) {
                 title = stringResource(R.string.settings_models),
                 summary = modelsSummary(current),
                 onClick = destinations.models,
+            ),
+            SettingsEntry(
+                icon = MaterialSymbols.Rounded.Forum,
+                title = stringResource(R.string.settings_chat),
+                summary = stringResource(R.string.settings_chat_summary),
+                onClick = destinations.chat,
             ),
             SettingsEntry(
                 icon = MaterialSymbols.Rounded.Palette,
@@ -154,6 +164,12 @@ fun SettingsScreen(destinations: SettingsDestinations) {
             ),
         )
         val systemEntries = listOf(
+            SettingsEntry(
+                icon = MaterialSymbols.Rounded.Bar_chart,
+                title = stringResource(R.string.settings_statistics),
+                summary = stringResource(R.string.settings_statistics_summary),
+                onClick = destinations.statistics,
+            ),
             SettingsEntry(
                 icon = MaterialSymbols.Rounded.Dns,
                 title = stringResource(R.string.settings_network),
@@ -225,7 +241,7 @@ private fun modelsSummary(settings: AppSettings): String {
 
 @Composable
 private fun voiceSummary(settings: AppSettings): String {
-    val provider = settings.voice.transcriptionProvider?.name ?: stringResource(R.string.settings_voice_no_provider)
+    val provider = settings.voice.transcriptionTarget(settings.providers)?.first?.name ?: stringResource(R.string.settings_voice_no_provider)
     val speak = stringResource(
         when (settings.voice.speakReplies) {
             SpeakReplies.NEVER -> R.string.settings_voice_speak_never

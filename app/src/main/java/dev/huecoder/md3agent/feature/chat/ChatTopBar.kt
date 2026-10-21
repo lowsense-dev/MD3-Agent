@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.DropdownMenu
@@ -14,8 +13,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -24,10 +25,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.composables.icons.materialsymbols.MaterialSymbols
+import com.composables.icons.materialsymbols.rounded.Bolt
 import com.composables.icons.materialsymbols.rounded.Delete
 import com.composables.icons.materialsymbols.rounded.Edit
 import com.composables.icons.materialsymbols.rounded.More_vert
@@ -38,7 +41,6 @@ import dev.huecoder.md3agent.data.chat.ChatLook
 import dev.huecoder.md3agent.feature.home.DeleteChatsDialog
 import dev.huecoder.md3agent.feature.home.NameDialog
 import dev.huecoder.md3agent.feature.models.label
-import dev.huecoder.md3agent.llm.models.ModelFamily
 import dev.huecoder.md3agent.ui.components.BackButton
 import dev.huecoder.md3agent.ui.components.ChatBadge
 import dev.huecoder.md3agent.ui.components.ModelChip
@@ -55,26 +57,37 @@ fun ChatTopBar(
     onRename: (String) -> Unit,
     onDelete: () -> Unit,
     onLookChange: (ChatLook) -> Unit,
+    yolo: Boolean = false,
+    onYoloChange: (Boolean) -> Unit = {},
+    onCompact: () -> Unit = {},
 ) {
     var dialog by rememberSaveable { mutableStateOf<ChatDialog?>(null) }
     val modelLabel = state.modelLabel()
     TopAppBar(
         title = {
             if (state.isStarted) {
-                StartedChatTitle(title, state.look, onOpenLook = { dialog = ChatDialog.LOOK })
+                StartedChatTitle(title, state.look, yolo, onOpenLook = { dialog = ChatDialog.LOOK })
             } else {
-                NewChatTitle(title, state.modelFamily, modelLabel, onPickModel)
+                Text(title, style = MaterialTheme.typography.titleMediumEmphasized, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         },
         navigationIcon = { BackButton(onBack) },
+        // Transparent: messages scroll under the bar instead of being cut off by a solid strip.
+        colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent, scrolledContainerColor = Color.Transparent),
         actions = {
-            if (state.isStarted) {
+            if (!state.isStarted) {
+                // Mirrors the back button: its arrow sits 20dp from the left edge, the chip ends 20dp from the right.
+                ModelChip(family = state.modelFamily, label = modelLabel, onClick = onPickModel, modifier = Modifier.padding(start = 12.dp, end = 16.dp))
+            } else {
+                ContextMeter(state.context, state.isCompacting, canCompact = !state.isStreaming, onCompact = onCompact)
                 ChatMenu(
                     modelSummary = listOfNotNull(modelLabel, state.agentName).joinToString(LABEL_SEPARATOR),
                     onPickModel = onPickModel,
                     onRename = { dialog = ChatDialog.RENAME },
                     onLook = { dialog = ChatDialog.LOOK },
                     onDelete = { dialog = ChatDialog.DELETE },
+                    yolo = yolo,
+                    onYoloChange = onYoloChange,
                 )
             }
         },
@@ -95,24 +108,15 @@ fun ChatTopBar(
 }
 
 @Composable
-private fun StartedChatTitle(title: String, look: ChatLook, onOpenLook: () -> Unit) {
+private fun StartedChatTitle(title: String, look: ChatLook, yolo: Boolean, onOpenLook: () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         ChatBadge(
             look,
             size = BADGE_SIZE,
             modifier = Modifier.clip(CircleShape).clickable(onClickLabel = stringResource(R.string.chat_look_title), onClick = onOpenLook),
         )
-        Text(title, style = MaterialTheme.typography.titleMediumEmphasized, maxLines = 1, overflow = TextOverflow.Ellipsis)
-    }
-}
-
-@Composable
-private fun NewChatTitle(title: String, family: ModelFamily?, modelLabel: String?, onPickModel: () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-        Text(title, style = MaterialTheme.typography.titleMediumEmphasized, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Box(Modifier.weight(1f).padding(start = 12.dp), contentAlignment = Alignment.Center) {
-            ModelChip(family = family, label = modelLabel, onClick = onPickModel)
-        }
+        Text(title, style = MaterialTheme.typography.titleMediumEmphasized, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+        if (yolo) Icon(MaterialSymbols.Rounded.Bolt, contentDescription = stringResource(R.string.chat_yolo), tint = MaterialTheme.colorScheme.error)
     }
 }
 
@@ -122,7 +126,15 @@ private fun ChatUiState.modelLabel(): String? = modelName?.let { name ->
 }
 
 @Composable
-private fun ChatMenu(modelSummary: String, onPickModel: () -> Unit, onRename: () -> Unit, onLook: () -> Unit, onDelete: () -> Unit) {
+private fun ChatMenu(
+    modelSummary: String,
+    onPickModel: () -> Unit,
+    onRename: () -> Unit,
+    onLook: () -> Unit,
+    onDelete: () -> Unit,
+    yolo: Boolean,
+    onYoloChange: (Boolean) -> Unit,
+) {
     var open by rememberSaveable { mutableStateOf(false) }
     Box {
         IconButton(onClick = { open = true }, shapes = IconButtonDefaults.shapes()) {
@@ -154,6 +166,21 @@ private fun ChatMenu(modelSummary: String, onPickModel: () -> Unit, onRename: ()
                 text = { Text(stringResource(R.string.chat_look_title)) },
                 leadingIcon = { Icon(MaterialSymbols.Rounded.Palette, contentDescription = null) },
                 onClick = { open = false; onLook() },
+            )
+            DropdownMenuItem(
+                text = {
+                    Column {
+                        Text(stringResource(R.string.chat_yolo))
+                        Text(
+                            stringResource(R.string.chat_yolo_hint),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                },
+                leadingIcon = { Icon(MaterialSymbols.Rounded.Bolt, contentDescription = null) },
+                trailingIcon = { Switch(checked = yolo, onCheckedChange = null) },
+                onClick = { onYoloChange(!yolo) },
             )
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.home_delete_chat), color = MaterialTheme.colorScheme.error) },

@@ -28,8 +28,21 @@ class ScreenContextStore(private val clock: () -> Long = System::currentTimeMill
         _latest.value = ScreenSnapshot(previous?.packageName, previous?.text.orEmpty(), screenshot, clock())
     }
 
+    /** The snapshot only while it still describes what the user was looking at; an old one is dropped, screenshot included. */
+    fun fresh(): ScreenSnapshot? {
+        val snapshot = _latest.value ?: return null
+        if (clock() - snapshot.capturedAt <= MAX_AGE_MS) return snapshot
+        _latest.compareAndSet(snapshot, null)
+        return null
+    }
+
     fun clear() {
         _latest.value = null
+    }
+
+    private companion object {
+        // Long enough to keep talking about the screen after moving the chat into the app, short enough not to leak into later chats.
+        const val MAX_AGE_MS = 5 * 60_000L
     }
 }
 

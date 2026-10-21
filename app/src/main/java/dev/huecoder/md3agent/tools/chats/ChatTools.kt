@@ -17,8 +17,10 @@ import dev.huecoder.md3agent.tools.objectSchema
 import dev.huecoder.md3agent.tools.optionalInt
 import dev.huecoder.md3agent.tools.optionalString
 import dev.huecoder.md3agent.tools.stringProperty
+import dev.huecoder.md3agent.tools.untrusted
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.JsonObject
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -85,7 +87,7 @@ class ReadChatTool(private val chats: ChatRepository) : ContextualTool {
         if (window.isEmpty()) return ToolOutcome("\"${chat.title}\" has no messages in this range (${spoken.size} in total)")
         val first = spoken.size - offset - window.size + 1
         val header = "\"${chat.title}\", messages $first-${first + window.size - 1} of ${spoken.size}:"
-        return ToolOutcome(header + "\n\n" + ChatTranscript.excerpt(window, MAX_MESSAGE_CHARS))
+        return ToolOutcome(header + "\n\n" + untrusted("chat history", ChatTranscript.excerpt(window, MAX_MESSAGE_CHARS)))
     }
 
     companion object {
@@ -113,11 +115,14 @@ class ExportChatTool(private val chats: ChatRepository, private val files: Devic
     override suspend fun execute(arguments: JsonObject, settings: ToolSettings, context: ToolContext): ToolOutcome {
         val chatId = arguments.optionalString("chat_id") ?: context.chatId
         val chat = chats.chat(chatId) ?: return ToolOutcome.error("No chat with this id, call ${ListChatsTool.NAME} first")
-        val target = files.resolve(arguments.optionalString("path") ?: "${fileNameOf(chat.title)}.md")
+        val target = arguments.optionalString("path")?.let(files::resolve) ?: freeWorkspaceFile(fileNameOf(chat.title))
         val markdown = ChatTranscript.markdown(chat.title, chats.history(chat.id))
         files.write(target, settings.access.files, markdown.toByteArray(), append = false)
         return ToolOutcome("Saved \"${chat.title}\" to ${target.path}. Offer to show it with send_files if the user wants the file.")
     }
+
+    private fun freeWorkspaceFile(base: String): File =
+        generateSequence(1) { it + 1 }.map { files.resolve(if (it == 1) "$base.md" else "$base ($it).md") }.first { !it.exists() }
 
     private fun fileNameOf(title: String) = title.replace(UNSAFE_FILE_CHARS, "_").trim('_', ' ').take(MAX_FILE_NAME).ifEmpty { "chat" }
 
@@ -152,14 +157,13 @@ class SearchMessagesTool(private val chats: ChatRepository) : ContextualTool {
         val hits = chats.searchMessages(query, limit)
         if (hits.isEmpty()) return ToolOutcome("No messages contain \"$query\"")
         val dates = SimpleDateFormat(DATE_PATTERN, Locale.ROOT)
-        return ToolOutcome(
-            hits.joinToString("\n") { hit ->
-                val marker = if (hit.chatId == context.chatId) " (this chat)" else ""
-                val author = if (hit.role == MessageRole.USER) "user" else "assistant"
-                val excerpt = SearchSnippet.around(hit.content, query, EXCERPT_CHARS).text
-                "${hit.chatId} | ${hit.chatTitle}$marker | ${hit.messageId} | $author | ${dates.format(Date(hit.createdAt))} | $excerpt"
-            },
-        )
+        val rows = hits.joinToString("\n") { hit ->
+            val marker = if (hit.chatId == context.chatId) " (this chat)" else ""
+            val author = if (hit.role == MessageRole.USER) "user" else "assistant"
+            val excerpt = SearchSnippet.around(hit.content, query, EXCERPT_CHARS).text
+            "${hit.chatId} | ${hit.chatTitle}$marker | ${hit.messageId} | $author | ${dates.format(Date(hit.createdAt))} | $excerpt"
+        }
+        return ToolOutcome(untrusted("chat history", rows))
     }
 
     companion object {

@@ -17,6 +17,8 @@ class HttpClientProvider(networkSettings: Flow<NetworkSettings>, scope: Coroutin
         .connectTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         .readTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         .writeTimeout(WRITE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        .addInterceptor(CleartextCredentialGuard())
+        .addNetworkInterceptor(CleartextCredentialGuard())
         .build()
 
     val client: StateFlow<OkHttpClient> = networkSettings

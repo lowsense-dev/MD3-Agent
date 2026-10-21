@@ -25,4 +25,9 @@ class AppVersionTest {
     fun `garbage is rejected`() {
         assertNull(AppVersion.parse("nightly"))
     }
+
+    @Test
+    fun `a part too big for a number is rejected`() {
+        assertNull(AppVersion.parse("1.99999999999"))
+    }
 }

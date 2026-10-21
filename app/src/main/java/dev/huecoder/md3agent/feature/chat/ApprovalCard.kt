@@ -16,22 +16,33 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import dev.huecoder.md3agent.App
 import dev.huecoder.md3agent.R
 import dev.huecoder.md3agent.conversation.ApprovalDecision
+import dev.huecoder.md3agent.conversation.ToolApprovals
 import dev.huecoder.md3agent.tools.system.RunPythonTool
 import dev.huecoder.md3agent.ui.components.ShapeBadge
 import dev.huecoder.md3agent.ui.components.ToolCatalog
 import dev.huecoder.md3agent.ui.text.asString
+import kotlinx.coroutines.flow.map
 
 @Composable
 fun ApprovalCard(call: ToolCallUi, onDecision: (ApprovalDecision) -> Unit, modifier: Modifier = Modifier) {
     val info = ToolCatalog.of(call.name)
     val arguments = readableArguments(call.arguments)
+    val settings = (LocalContext.current.applicationContext as App).container.settings
+    val tools by remember(settings) { settings.settings.map { it.tools } }.collectAsState(initial = null)
+    val controlsPhone = call.name == RunPythonTool.NAME && tools?.let { RunPythonTool.phoneBridgeOn(it) } != false
+    val fullAccess = !ToolApprovals.offersSession(call.name)
     Surface(shape = MaterialTheme.shapes.extraLarge, color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -45,19 +56,8 @@ fun ApprovalCard(call: ToolCallUi, onDecision: (ApprovalDecision) -> Unit, modif
                     )
                 }
             }
-            if (call.controlsPhone()) {
-                Surface(
-                    shape = MaterialTheme.shapes.large,
-                    color = MaterialTheme.colorScheme.errorContainer,
-                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
-                ) {
-                    Text(
-                        stringResource(R.string.approval_python_phone),
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.fillMaxWidth().padding(12.dp),
-                    )
-                }
-            }
+            if (fullAccess) Warning(stringResource(R.string.approval_full_access))
+            if (controlsPhone) Warning(stringResource(R.string.approval_python_phone))
             if (arguments.isNotEmpty()) {
                 Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainerLowest) {
                     Text(
@@ -83,16 +83,27 @@ fun ApprovalCard(call: ToolCallUi, onDecision: (ApprovalDecision) -> Unit, modif
                     modifier = Modifier.weight(1f),
                 ) { Text(stringResource(R.string.approval_allow)) }
             }
-            TextButton(
-                onClick = { onDecision(ApprovalDecision.ALLOW_FOR_SESSION) },
-                shapes = ButtonDefaults.shapes(),
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text(stringResource(R.string.approval_allow_session)) }
+            if (!fullAccess) {
+                TextButton(
+                    onClick = { onDecision(ApprovalDecision.ALLOW_FOR_SESSION) },
+                    shapes = ButtonDefaults.shapes(),
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text(stringResource(R.string.approval_allow_session)) }
+            }
         }
     }
 }
 
-private fun ToolCallUi.controlsPhone(): Boolean = name == RunPythonTool.NAME && RunPythonTool.usesPhone(arguments)
+@Composable
+private fun Warning(text: String) {
+    Surface(
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.errorContainer,
+        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+    ) {
+        Text(text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.fillMaxWidth().padding(12.dp))
+    }
+}
 
 private val BADGE_SIZE = 40.dp
 private val ARGUMENTS_MAX_HEIGHT = 160.dp

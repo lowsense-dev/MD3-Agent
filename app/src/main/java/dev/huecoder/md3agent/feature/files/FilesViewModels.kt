@@ -31,7 +31,13 @@ class MediaViewModel(private val library: FileLibrary) : ViewModel() {
 
     fun refresh() {
         viewModelScope.launch {
-            val images = library.media()
+            val images = try {
+                library.media()
+            } catch (e: IOException) {
+                _errors.value = UiText.Resource(R.string.files_error_load)
+                _media.update { it.orEmpty() }
+                return@launch
+            }
             _media.value = images
             _selection.update { selected -> selected.intersect(images.map { it.file.path }.toSet()) }
         }
@@ -98,7 +104,13 @@ class FolderViewModel(private val library: FileLibrary, val location: LibraryLoc
 
     fun refresh() {
         viewModelScope.launch {
-            val entries = library.list(location)
+            val entries = try {
+                library.list(location)
+            } catch (e: IOException) {
+                _errors.value = UiText.Resource(R.string.files_error_load)
+                _state.update { it.copy(isLoaded = true) }
+                return@launch
+            }
             _state.update { current -> current.copy(entries = entries, selection = current.selection.intersect(entries.map { it.key }.toSet()), isLoaded = true) }
         }
     }

@@ -56,6 +56,8 @@ class UserPrompts {
         val entry = PendingPrompt(UUID.randomUUID().toString(), chatId, prompt)
         val answer = CompletableDeferred<PromptAnswer>()
         answers[entry.id] = answer
+        // Only one question per chat is on screen; an older one still waiting is skipped instead of hanging forever.
+        _pending.value[chatId]?.let { older -> answers[older.id]?.complete(PromptAnswer.Skipped) }
         _pending.update { it + (chatId to entry) }
         try {
             return answer.await()

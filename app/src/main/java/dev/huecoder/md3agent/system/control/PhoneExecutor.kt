@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction
+import android.view.accessibility.AccessibilityWindowInfo
 import androidx.annotation.StringRes
 import dev.huecoder.md3agent.R
 import kotlinx.coroutines.delay
@@ -23,11 +24,15 @@ internal class PhoneExecutor(
 ) {
     private val repeats = RepeatGuard()
 
-    suspend fun run(service: AccessibilityService, request: PhoneRequest): PhoneReport {
+    suspend fun run(service: AccessibilityService, request: PhoneRequest, attached: () -> Boolean): PhoneReport {
         val reports = mutableListOf<StepReport>()
-        val beforeElements = if (request.observe == Observe.CHANGES) reader.snapshot(service).elements else emptyList()
+        val beforeElements = if (request.observe == Observe.CHANGES) reader.snapshot(service, remember = false).elements else emptyList()
         val before = reader.probe(service)
         for ((index, step) in request.steps.withIndex()) {
+            if (!attached()) {
+                reports += StepReport(step.action.title(), ActionResult.Failed(PhoneControl.NOT_CONNECTED))
+                return PhoneReport(reports, null, null, null)
+            }
             val result = runStep(service, step)
             reports += StepReport(step.action.title(), result)
             if (result is ActionResult.Failed && request.stopOnError) break
@@ -42,11 +47,11 @@ internal class PhoneExecutor(
     }
 
     suspend fun read(service: AccessibilityService, detailed: Boolean, find: ElementSelector?): ScreenReading {
-        val leftOwnApp = reader.isOwnAppInFront(service)
-        if (leftOwnApp) leaveOwnApp(service)
+        check(!reader.isLocked(service)) { PhoneControl.LOCKED }
+        val note = if (reader.isOwnAppInFront(service)) leaveOwnApp(service) else null
         val snapshot = reader.snapshot(service)
         val description = snapshot.describe(detailed, find)
-        return ScreenReading(snapshot, if (leftOwnApp) "$HOME_FIRST_NOTE\n$description" else description)
+        return ScreenReading(snapshot, if (note != null) "$note\n$description" else description)
     }
 
     private fun observation(observe: Observe, snapshot: ScreenSnapshot, before: List<ScreenElement>, changed: Boolean): String = when (observe) {
@@ -61,13 +66,11 @@ internal class PhoneExecutor(
     private suspend fun runStep(service: AccessibilityService, step: PhoneStep): ActionResult {
         val action = step.action
         val say = step.say
-        val leftOwnApp = action.touchesScreen() && reader.isOwnAppInFront(service)
-        if (leftOwnApp) {
-            leaveOwnApp(service)
-            if (action.usesNumbers()) return ActionResult.Failed("The assistant's own app was in front, so I went to the home screen. Read the screen again before using element numbers.")
-        }
+        if (reader.isLocked(service)) return ActionResult.Failed(PhoneControl.LOCKED)
+        val note = if (action.touchesScreen() && reader.isOwnAppInFront(service)) leaveOwnApp(service) else null
+        if (note != null && action.usesNumbers()) return ActionResult.Failed("$note Read the screen again before using element numbers.")
         val result = perform(service, action, say)
-        return if (leftOwnApp) result.withNote(HOME_FIRST_NOTE) else result
+        return if (note != null) result.withNote(note) else result
     }
 
     private suspend fun perform(service: AccessibilityService, action: PhoneAction, say: String?): ActionResult {
@@ -102,11 +105,13 @@ internal class PhoneExecutor(
             when {
                 snapshot == null -> Located.Problem("Read the screen first with phone_screen")
                 element == null -> Located.Problem("No element [${target.number}] on the last screen, read it again")
+                snapshot.nodes[element.number]?.let { !it.refresh() || !it.isVisibleToUser } == true ->
+                    Located.Problem("Element [${target.number}] is no longer on the screen, read the screen again")
                 else -> ready(service, snapshot, element)
             }
         }
         is Target.Selected -> {
-            val snapshot = reader.snapshot(service)
+            val snapshot = reader.snapshot(service, remember = false)
             when (val pick = ElementPicker.pick(target.selector, snapshot.elements)) {
                 is Pick.Found -> ready(service, snapshot, pick.element)
                 is Pick.Ambiguous -> Located.Problem(ambiguity(target.selector, pick.candidates))
@@ -163,10 +168,13 @@ internal class PhoneExecutor(
         return if (kind == Press.DOUBLE) session.doubleClick(x, y, caption, perform) else session.click(x, y, caption, perform)
     }
 
-    private suspend fun tapPoint(service: AccessibilityService, x: Int, y: Int, say: String?): ActionResult =
-        session.click(x, y, caption(say, R.string.phone_use_tap_point)) {
+    private suspend fun tapPoint(service: AccessibilityService, x: Int, y: Int, say: String?): ActionResult {
+        val screen = reader.screenSize(service)
+        if (x !in 0 until screen.x || y !in 0 until screen.y) return ActionResult.Failed("$x,$y is outside the ${screen.x}x${screen.y} screen, nothing was tapped")
+        return session.click(x, y, caption(say, R.string.phone_use_tap_point)) {
             if (retrying { gestures.tap(service, x, y) } || injector.tap(x, y)) ActionResult.Done("Tapped at $x,$y") else ActionResult.Failed("The system cancelled the gesture")
         }
+    }
 
     private suspend fun pressElement(service: AccessibilityService, target: Located.Ready, kind: Press): Boolean {
         val x = target.box.centerX
@@ -242,7 +250,7 @@ internal class PhoneExecutor(
     private suspend fun submit(service: AccessibilityService, field: AccessibilityNodeInfo, box: ScreenBox, caption: String): String {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && field.performAction(AccessibilityAction.ACTION_IME_ENTER.id)) return "pressed enter"
         if (injector.key(InputInjector.KEYCODE_ENTER)) return "pressed enter through the system shell"
-        val snapshot = reader.snapshot(service)
+        val snapshot = reader.snapshot(service, remember = false)
         val button = submitButton(snapshot, box)
         if (button != null) {
             val located = ready(service, snapshot, button)
@@ -262,7 +270,7 @@ internal class PhoneExecutor(
 
     private suspend fun scroll(service: AccessibilityService, action: PhoneAction.Scroll, say: String?): ActionResult {
         val container = when (val target = action.target) {
-            null -> reader.snapshot(service).let { snapshot -> snapshot.elements.filter { it.scrollable }.maxByOrNull { it.bounds.width * it.bounds.height }?.let { ready(service, snapshot, it) } }
+            null -> reader.snapshot(service, remember = false).let { snapshot -> snapshot.elements.filter { it.scrollable }.maxByOrNull { it.bounds.width * it.bounds.height }?.let { ready(service, snapshot, it) } }
             else -> locate(service, target).let { located ->
                 if (located !is Located.Ready) return ActionResult.Failed((located as Located.Problem).message)
                 located
@@ -298,7 +306,7 @@ internal class PhoneExecutor(
         var container = ScreenBox(0, 0, screen.x, screen.y)
         val search = ScrollSearch(
             isVisible = {
-                var snapshot = reader.snapshot(service)
+                var snapshot = reader.snapshot(service, remember = false)
                 container = snapshot.elements.filter { it.scrollable }.maxByOrNull { it.bounds.width * it.bounds.height }?.bounds ?: container
                 var pick = ElementPicker.pick(action.selector, snapshot.elements)
                 val revealing = when (pick) {
@@ -308,7 +316,7 @@ internal class PhoneExecutor(
                 }
                 if (revealing) {
                     settle(service, SETTLE_SCROLL_MS)
-                    snapshot = reader.snapshot(service)
+                    snapshot = reader.snapshot(service, remember = false)
                     pick = ElementPicker.pick(action.selector, snapshot.elements)
                 }
                 pick is Pick.Ambiguous || (pick is Pick.Found && !pick.element.partial)
@@ -335,13 +343,13 @@ internal class PhoneExecutor(
                 },
             )
         }
-        val snapshot = reader.snapshot(service)
+        val snapshot = reader.snapshot(service, remember = false)
         return when (val pick = ElementPicker.pick(action.selector, snapshot.elements)) {
             is Pick.Ambiguous -> ActionResult.Failed(ambiguity(action.selector, pick.candidates))
             is Pick.Missing -> ActionResult.Failed("$described scrolled out of view again, try once more")
             is Pick.Found -> {
                 centerOnScreen(service, container, pick.element)
-                val final = reader.snapshot(service).let { ElementPicker.pick(action.selector, it.elements) as? Pick.Found }?.element ?: pick.element
+                val final = reader.snapshot(service, remember = false).let { ElementPicker.pick(action.selector, it.elements) as? Pick.Found }?.element ?: pick.element
                 ActionResult.Done("Found ${name(final)} after ${outcome.swipes} swipes, it is at ${final.bounds.centerX},${final.bounds.centerY}")
             }
         }
@@ -362,7 +370,7 @@ internal class PhoneExecutor(
         val offset = element.bounds.centerY - container.centerY
         if (kotlin.math.abs(offset) < container.height * CENTER_TOLERANCE) return
         val finger = if (offset > 0) SwipeDirection.UP else SwipeDirection.DOWN
-        val reach = (kotlin.math.abs(offset).toFloat() * 2f / container.height).coerceIn(MIN_CENTER_REACH, SwipePlanner.CONTAINER_REACH)
+        val reach = (kotlin.math.abs(offset).toFloat() / container.height).coerceIn(MIN_CENTER_REACH, SwipePlanner.CONTAINER_REACH)
         val plan = SwipePlanner.inside(container, finger, reach, SCROLL_STEP_MS)
         session.dragging(plan.from.x, plan.from.y, plan.to.x, plan.to.y, plan.durationMs, null) {
             gestures.swipeAndHold(service, plan.from, plan.to, plan.durationMs)
@@ -469,14 +477,17 @@ internal class PhoneExecutor(
         }
     }
 
-    private suspend fun leaveOwnApp(service: AccessibilityService) {
-        service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
+    private suspend fun leaveOwnApp(service: AccessibilityService): String {
+        val type = reader.frontRoot(service)?.window?.type
+        val sheet = type != null && type != AccessibilityWindowInfo.TYPE_APPLICATION
+        service.performGlobalAction(if (sheet) AccessibilityService.GLOBAL_ACTION_BACK else AccessibilityService.GLOBAL_ACTION_HOME)
         var waited = 0L
         while (waited < LEAVE_APP_WAIT_MS && reader.isOwnAppInFront(service)) {
             delay(SETTLE_POLL_MS)
             waited += SETTLE_POLL_MS
         }
         settle(service, SETTLE_BETWEEN_MS)
+        return if (sheet) SHEET_CLOSED_NOTE else HOME_FIRST_NOTE
     }
 
     private fun caption(say: String?, @StringRes automatic: Int, vararg arguments: Any): String = say ?: context.getString(automatic, *arguments)
@@ -510,6 +521,7 @@ internal class PhoneExecutor(
 
     companion object {
         private const val HOME_FIRST_NOTE = "(The assistant's own app was in front, so I went to the home screen first.)"
+        private const val SHEET_CLOSED_NOTE = "(The assistant sheet was over the app, so I closed it first.)"
         private const val LOOP_HINT = "Hint: the same action has changed nothing three times in a row. Try another element or approach, scroll, or look at the pixels with phone_screenshot."
         private const val CAPTION_LABEL_CHARS = 40
         private const val GESTURE_ATTEMPTS = 2

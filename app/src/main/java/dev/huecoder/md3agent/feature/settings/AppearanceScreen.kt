@@ -29,24 +29,9 @@ fun AppearanceScreen(onBack: () -> Unit) {
             modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            SectionHeader(stringResource(R.string.chat_settings_section_replies))
-            LabeledSwitch(
-                title = stringResource(R.string.chat_settings_show_tokens),
-                summary = stringResource(R.string.chat_settings_show_tokens_summary),
-                checked = current.chat.showTokenUsage,
-                onCheckedChange = { value -> viewModel.updateChat { it.copy(showTokenUsage = value) } },
-            )
-            LabeledSwitch(
-                title = stringResource(R.string.chat_settings_auto_title),
-                summary = stringResource(R.string.chat_settings_auto_title_summary),
-                checked = current.chat.autoTitle,
-                onCheckedChange = { value -> viewModel.updateChat { it.copy(autoTitle = value) } },
-            )
             SectionHeader(stringResource(R.string.appearance_section_chat_list))
             SwipeActionDropdown(R.string.appearance_swipe_right, current.ui.swipeRight) { action -> viewModel.updateInterface { it.copy(swipeRight = action) } }
             SwipeActionDropdown(R.string.appearance_swipe_left, current.ui.swipeLeft) { action -> viewModel.updateInterface { it.copy(swipeLeft = action) } }
-            SectionHeader(stringResource(R.string.chat_settings_section_typing))
-            TypingSettingsCard(current.chat.typing, onChange = { style -> viewModel.updateChat { it.copy(typing = style) } })
             SectionHeader(stringResource(R.string.appearance_section_feedback))
             LabeledSwitch(
                 title = stringResource(R.string.appearance_haptics),
@@ -62,3 +47,4 @@ fun AppearanceScreen(onBack: () -> Unit) {
         }
     }
 }
+

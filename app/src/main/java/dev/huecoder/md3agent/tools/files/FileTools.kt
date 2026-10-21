@@ -88,7 +88,7 @@ class ReadFileTool(private val files: DeviceFiles, private val store: Attachment
         val file = files.resolve(arguments.requireString("path"))
         val offset = (arguments.optionalInt("offset") ?: 0).coerceAtLeast(0)
         val mimeType = TextFormats.guessMimeType(file.name)
-        return if (mimeType.startsWith("image/")) {
+        return if (mimeType.startsWith("image/") && mimeType != "image/svg+xml") {
             val image = files.withLocalCopy(file, settings.access.files, MAX_IMAGE_BYTES) { store.importLocal(it, forModel = true) }
             ToolOutcome("${file.path} is attached below as an image", attachments = listOf(image))
         } else {

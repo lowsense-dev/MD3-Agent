@@ -59,7 +59,7 @@ object PhoneActionSchema {
         booleanProperty("submit", note("Press enter after typing, a send or search button is tapped when enter does not work"))
         enumProperty(
             "direction",
-            note("scroll: where the content goes. scroll_to: which way to look first. swipe: where the finger goes, diagonals allowed"),
+            note("scroll: which way to move through the content (down shows what is below). scroll_to: which way to look first. swipe: where the finger goes, diagonals allowed"),
             SwipeDirection.entries.map { it.key },
         )
         enumProperty("key", note("System button for press"), GlobalKey.entries.map { it.key })

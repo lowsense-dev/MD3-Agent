@@ -25,9 +25,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.composables.icons.materialsymbols.MaterialSymbols
+import com.composables.icons.materialsymbols.rounded.Add
 import com.composables.icons.materialsymbols.rounded.Image
 import com.composables.icons.materialsymbols.rounded.Neurology
 import com.composables.icons.materialsymbols.rounded.Visibility
@@ -43,17 +45,36 @@ internal fun ModelList(
     onPick: (ModelRow) -> Unit,
     modifier: Modifier = Modifier,
     listState: LazyListState = rememberLazyListState(),
+    customId: String? = null,
+    onPickCustom: (String) -> Unit = {},
+    @StringRes emptyText: Int = R.string.model_empty,
 ) {
-    if (rows.isEmpty()) {
+    if (rows.isEmpty() && customId == null) {
         Box(modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.TopCenter) {
-            Text(stringResource(R.string.model_empty), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(stringResource(emptyText), color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
         }
         return
     }
+    val count = rows.size + if (customId != null) 1 else 0
     LazyColumn(state = listState, modifier = modifier, contentPadding = PickerListPadding, verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)) {
         itemsIndexed(rows, key = { _, row -> row.info.id }) { index, row ->
-            ModelRowItem(row, isSelected = row.info.id == selectedId, index = index, count = rows.size, onClick = { onPick(row) })
+            ModelRowItem(row, isSelected = row.info.id == selectedId, index = index, count = count, onClick = { onPick(row) })
         }
+        if (customId != null) {
+            item(key = CUSTOM_ROW_KEY) { CustomModelItem(customId, index = rows.size, count = count, onClick = { onPickCustom(customId) }) }
+        }
+    }
+}
+
+@Composable
+private fun CustomModelItem(modelId: String, index: Int, count: Int, onClick: () -> Unit) {
+    SegmentedListItem(
+        onClick = onClick,
+        shapes = ListItemDefaults.segmentedShapes(index, count),
+        colors = ListItemDefaults.segmentedColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        leadingContent = { Icon(MaterialSymbols.Rounded.Add, contentDescription = null) },
+    ) {
+        Text(stringResource(R.string.model_use_custom, modelId), style = MaterialTheme.typography.titleMediumEmphasized, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -74,9 +95,9 @@ private fun ModelRowItem(row: ModelRow, isSelected: Boolean, index: Int, count: 
         },
         supportingContent = {
             Column {
-                if (row.info.displayName != row.info.id) {
-                    Text(row.info.id, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
-                }
+                val context = row.info.contextWindow?.let { stringResource(R.string.model_context, formatContext(it)) }
+                val idLine = listOfNotNull(row.info.id.takeIf { it != row.info.displayName }, context).joinToString(ID_SEPARATOR)
+                if (idLine.isNotEmpty()) Text(idLine, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
                 Capabilities(row)
             }
         },
@@ -93,13 +114,11 @@ private fun ModelRowItem(row: ModelRow, isSelected: Boolean, index: Int, count: 
 @Composable
 private fun Capabilities(row: ModelRow) {
     val traits = row.traits
-    val context = row.info.contextLength?.let(::formatContext)
-    if (!traits.vision && !traits.reasoning && !traits.generatesImages && context == null) return
+    if (!traits.vision && !traits.reasoning && !traits.generatesImages) return
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
         if (traits.vision) CapabilityMark(MaterialSymbols.Rounded.Visibility, R.string.model_filter_vision)
         if (traits.reasoning) CapabilityMark(MaterialSymbols.Rounded.Neurology, R.string.model_filter_reasoning)
         if (traits.generatesImages) CapabilityMark(MaterialSymbols.Rounded.Image, R.string.model_filter_images)
-        context?.let { Text(stringResource(R.string.model_context, it), style = MaterialTheme.typography.labelMedium) }
     }
 }
 
@@ -150,5 +169,7 @@ private fun formatContext(tokens: Int): String = when {
 }
 
 private const val THOUSAND = 1_000
+private const val ID_SEPARATOR = " · "
 private const val MILLION = 1_000_000
 private val CAPABILITY_ICON = 16.dp
+private const val CUSTOM_ROW_KEY = "custom-model-id"

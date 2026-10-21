@@ -69,7 +69,14 @@ fun MainScreen(
     BackHandler(enabled = tab != MainTab.CHATS) { open(MainTab.CHATS) }
 
     Box(Modifier.fillMaxSize().nestedScroll(collapseOnScroll)) {
-        HorizontalPager(state = pager, key = { MainTab.entries[it] }, modifier = Modifier.fillMaxSize()) { page ->
+        // All three tabs stay composed: switching then only slides finished screens instead of building one mid-animation
+        // (and building the one in between when jumping from the first tab to the last).
+        HorizontalPager(
+            state = pager,
+            key = { MainTab.entries[it] },
+            beyondViewportPageCount = MainTab.entries.size - 1,
+            modifier = Modifier.fillMaxSize(),
+        ) { page ->
             when (MainTab.entries[page]) {
                 MainTab.CHATS -> HomeScreen(onOpenChat = onOpenChat, onOpenMessage = onOpenMessage, onOpenSettings = { open(MainTab.SETTINGS) })
                 MainTab.FILES -> FilesScreen(onOpenFolder = onOpenFolder, onOpenMedia = onOpenMedia)

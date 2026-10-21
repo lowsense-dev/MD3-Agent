@@ -4,10 +4,17 @@ class ToolCallAccumulator {
     private class Partial(var id: String? = null, var name: String = "", val arguments: StringBuilder = StringBuilder(), var signature: String? = null)
 
     private val partials = sortedMapOf<Int, Partial>()
+    private val slots = HashMap<Int, Int>()
 
     fun add(delta: CompletionEvent.ToolCallDelta) {
-        val partial = partials.getOrPut(delta.index) { Partial() }
-        delta.id?.takeIf { it.isNotEmpty() }?.let { partial.id = it }
+        val id = delta.id?.takeIf { it.isNotEmpty() }
+        var slot = slots[delta.index] ?: delta.index
+        if (id != null && partials[slot]?.id.let { it != null && it != id }) {
+            slot = partials.lastKey() + 1
+            slots[delta.index] = slot
+        }
+        val partial = partials.getOrPut(slot) { Partial() }
+        id?.let { partial.id = it }
         delta.name?.takeIf { it.isNotEmpty() && it != partial.name }?.let { partial.name += it }
         delta.arguments?.let { partial.arguments.append(it) }
         delta.signature?.takeIf { it.isNotEmpty() }?.let { partial.signature = it }

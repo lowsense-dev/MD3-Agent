@@ -10,6 +10,8 @@ import dev.huecoder.md3agent.system.shell.Shell
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class PhoneControl(private val context: Context, shell: suspend () -> Shell?) : ScriptPhone {
     private val service = MutableStateFlow<AccessibilityService?>(null)
@@ -17,6 +19,7 @@ class PhoneControl(private val context: Context, shell: suspend () -> Shell?) : 
     private val reader = ScreenReader(context)
     val session = PhoneUseSession()
     private val executor = PhoneExecutor(context, session, reader, PhoneGestures(), InputInjector(shell))
+    private val busy = Mutex()
 
     val connected: StateFlow<AccessibilityService?> = service.asStateFlow()
 
@@ -41,34 +44,42 @@ class PhoneControl(private val context: Context, shell: suspend () -> Shell?) : 
     override fun say(caption: String) = session.say(caption)
 
     override suspend fun read(say: String?, detailed: Boolean, find: ElementSelector?): ScreenReading? {
-        val active = service.value ?: return null
-        session.say(say ?: context.getString(R.string.phone_use_looking))
-        return executor.read(active, detailed, find)
+        return busy.withLock {
+            val active = service.value ?: return null
+            session.say(say ?: context.getString(R.string.phone_use_looking))
+            executor.read(active, detailed, find)
+        }
     }
 
     suspend fun screenshot(region: ScreenRegion, marks: Boolean, say: String? = null): ScreenshotResult {
-        val active = service.value ?: return ScreenshotResult.Failed(NOT_CONNECTED)
-        session.say(say ?: context.getString(R.string.phone_use_screenshot))
-        val numbered = if (marks) reader.snapshot(active).elements else emptyList()
-        val area = when (region) {
-            ScreenRegion.Full -> null
-            is ScreenRegion.Area -> Rect(region.x, region.y, region.x + region.width, region.y + region.height)
-            is ScreenRegion.Element -> {
-                val element = reader.last?.elements?.getOrNull(region.number - 1)
-                    ?: return ScreenshotResult.Failed("No element [${region.number}] on the last screen, read it again with phone_screen")
-                element.bounds.toRect().apply { inset(-ELEMENT_CROP_PADDING_PX, -ELEMENT_CROP_PADDING_PX) }
+        return busy.withLock {
+            val active = service.value ?: return ScreenshotResult.Failed(NOT_CONNECTED)
+            if (reader.isLocked(active)) return ScreenshotResult.Failed(LOCKED)
+            session.say(say ?: context.getString(R.string.phone_use_screenshot))
+            val area = when (region) {
+                ScreenRegion.Full -> null
+                is ScreenRegion.Area -> Rect(region.x, region.y, region.x + region.width, region.y + region.height)
+                is ScreenRegion.Element -> {
+                    val element = reader.last?.elements?.getOrNull(region.number - 1)
+                        ?: return ScreenshotResult.Failed("No element [${region.number}] on the last screen, read it again with phone_screen")
+                    element.bounds.toRect().apply { inset(-ELEMENT_CROP_PADDING_PX, -ELEMENT_CROP_PADDING_PX) }
+                }
             }
+            val numbered = if (marks) reader.snapshot(active).elements else emptyList()
+            session.withOverlayHidden { screenshots.capture(active, area, numbered) }
         }
-        return session.withOverlayHidden { screenshots.capture(active, area, numbered) }
     }
 
     override suspend fun run(request: PhoneRequest): PhoneReport? {
-        val active = service.value ?: return null
-        return executor.run(active, request)
+        return busy.withLock {
+            val active = service.value ?: return null
+            executor.run(active, request) { service.value === active }
+        }
     }
 
     companion object {
         private const val ELEMENT_CROP_PADDING_PX = 16
         const val NOT_CONNECTED = "Phone control is off. Ask the user to enable MD3 Agent in Settings > Accessibility."
+        const val LOCKED = "The phone is locked or the screen is off. Ask the user to unlock it."
     }
 }

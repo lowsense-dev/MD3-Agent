@@ -11,6 +11,7 @@ import dev.huecoder.md3agent.tools.ToolOutcome
 import dev.huecoder.md3agent.tools.integerProperty
 import dev.huecoder.md3agent.tools.objectSchema
 import dev.huecoder.md3agent.tools.optionalInt
+import dev.huecoder.md3agent.tools.phone.PhoneActionTool
 import dev.huecoder.md3agent.tools.phone.PhoneScriptBridge
 import dev.huecoder.md3agent.tools.requireString
 import dev.huecoder.md3agent.tools.stringProperty
@@ -31,7 +32,8 @@ class RunPythonTool(
         name = NAME,
         description = "Runs a Python ${python.version} script inside the app and returns everything it printed. " +
             "Use it for calculations, parsing and converting data, and working with files. " +
-            "Only the standard library is available, no pip packages. Each call starts with fresh globals, so save anything you need later to a file. " +
+            "Besides the standard library it has numpy, pandas, matplotlib (save charts with savefig into the workspace, then show them with send_files), Pillow, requests and beautifulsoup4; nothing else can be installed. " +
+            "Each call starts with fresh globals, so save anything you need later to a file. " +
             "The working directory is the app workspace ${workspace.path}, files saved there can be shown to the user with send_files.",
         parameters = objectSchema(required = listOf(CODE)) {
             stringProperty(CODE, "Python source to run, print the results you need")
@@ -39,12 +41,12 @@ class RunPythonTool(
         },
     )
 
-    override fun promptNote(settings: ToolSettings): String? = PHONE_NOTE.takeIf { settings.phoneUse.pythonControl }
+    override fun promptNote(settings: ToolSettings): String? = PHONE_NOTE.takeIf { phoneBridgeOn(settings) }
 
     override suspend fun execute(arguments: JsonObject, settings: ToolSettings, context: ToolContext): ToolOutcome {
         val code = arguments.requireString(CODE)
         val timeoutSeconds = (arguments.optionalInt("timeout_seconds")?.toLong() ?: DEFAULT_TIMEOUT_S).coerceIn(1, MAX_TIMEOUT_S)
-        val bridge = if (settings.phoneUse.pythonControl) PhoneScriptBridge(phone, context.chatId) else null
+        val bridge = if (phoneBridgeOn(settings)) PhoneScriptBridge(phone, context.chatId) else null
         val result = python.run(code, workspace, timeoutSeconds, bridge)
         val output = result.output.ifBlank { "(no output)" }.let {
             if (it.length > MAX_OUTPUT_CHARS) it.take(MAX_OUTPUT_CHARS) + "\n…[output truncated at $MAX_OUTPUT_CHARS characters]" else it
@@ -64,6 +66,10 @@ class RunPythonTool(
         private val PHONE_IMPORT = Regex("""(?:^|[;\s])(?:import\s+(?:[\w.]+\s*,\s*)*phone\b|from\s+phone\b)|(?:__import__|import_module)\(\s*["']phone["']""")
 
         fun usesPhone(code: String): Boolean = PHONE_IMPORT.containsMatchIn(code)
+
+        // phone_action defaults to ASK, keep in sync with PhoneActionTool.defaultPermission
+        fun phoneBridgeOn(settings: ToolSettings): Boolean =
+            settings.phoneUse.pythonControl && settings.permission(PhoneActionTool.NAME, ToolPermission.ASK) != ToolPermission.OFF
 
         fun usesPhone(arguments: JsonObject): Boolean = usesPhone((arguments[CODE] as? JsonPrimitive)?.content.orEmpty())
 

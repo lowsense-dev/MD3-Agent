@@ -28,6 +28,7 @@ import com.composables.icons.materialsymbols.rounded.Visibility
 import com.composables.icons.materialsymbols.rounded.Visibility_off
 import dev.huecoder.md3agent.R
 import dev.huecoder.md3agent.data.settings.HeaderEntry
+import dev.huecoder.md3agent.net.CleartextCredentialGuard
 import dev.huecoder.md3agent.ui.components.FormField
 
 @Composable
@@ -50,20 +51,48 @@ internal fun SecretField(value: String, onValueChange: (String) -> Unit, label: 
     )
 }
 
+/** OkHttp rejects these at request time; catching them while typing keeps a broken header from being saved. */
+internal object HeaderRules {
+    private const val TOKEN_SYMBOLS = "!#$%&'*+-.^_`|~"
+
+    fun nameValid(name: String): Boolean = name.isBlank() || name.trim().all { it.isLetterOrDigit() && it.code < 128 || it in TOKEN_SYMBOLS }
+
+    fun valueValid(value: String): Boolean = value.all { it == '\t' || it.code in 0x20..0x7e }
+
+    fun allValid(headers: List<HeaderEntry>): Boolean = headers.all { nameValid(it.name) && valueValid(it.value) }
+}
+
 @Composable
 internal fun HeaderEditor(headers: List<HeaderEntry>, onChange: (List<HeaderEntry>) -> Unit) {
     headers.forEachIndexed { index, header ->
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        var revealed by rememberSaveable(index) { mutableStateOf(false) }
+        val secret = CleartextCredentialGuard.isCredential(header.name.trim())
+        Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FormField(
                 value = header.name,
                 onValueChange = { value -> onChange(headers.toMutableList().also { it[index] = header.copy(name = value) }) },
                 label = stringResource(R.string.provider_header_name),
+                isError = !HeaderRules.nameValid(header.name),
+                supportingText = stringResource(R.string.provider_header_name_invalid).takeUnless { HeaderRules.nameValid(header.name) },
                 modifier = Modifier.weight(1f),
             )
             FormField(
                 value = header.value,
                 onValueChange = { value -> onChange(headers.toMutableList().also { it[index] = header.copy(value = value) }) },
                 label = stringResource(R.string.provider_header_value),
+                isError = !HeaderRules.valueValid(header.value),
+                supportingText = stringResource(R.string.provider_header_value_invalid).takeUnless { HeaderRules.valueValid(header.value) },
+                visualTransformation = if (secret && !revealed) PasswordVisualTransformation() else VisualTransformation.None,
+                trailingIcon = if (!secret) null else {
+                    {
+                        IconButton(onClick = { revealed = !revealed }) {
+                            Icon(
+                                if (revealed) MaterialSymbols.Rounded.Visibility_off else MaterialSymbols.Rounded.Visibility,
+                                contentDescription = stringResource(if (revealed) R.string.provider_secret_hide else R.string.provider_secret_show),
+                            )
+                        }
+                    }
+                },
                 modifier = Modifier.weight(1.4f),
             )
             IconButton(onClick = { onChange(headers.filterIndexed { i, _ -> i != index }) }) {

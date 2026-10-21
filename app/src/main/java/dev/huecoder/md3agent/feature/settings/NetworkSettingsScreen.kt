@@ -41,7 +41,7 @@ fun NetworkSettingsScreen(onBack: () -> Unit) {
         val draft = current.copy(dohUrl = current.dohUrl.trim())
         SaveAction(isDirty = draft != saved, canSave = !current.dohEnabled || DohUrl.parse(current.dohUrl) != null) {
             scope.launch {
-                container.settings.updateNetwork(draft)
+                if (!container.settings.updateNetwork(draft)) return@launch
                 saved = draft
                 onBack()
             }

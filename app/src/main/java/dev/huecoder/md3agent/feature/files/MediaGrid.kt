@@ -59,8 +59,8 @@ internal fun MediaGrid(
         columns = GridCells.Adaptive(CELL_SIZE),
         modifier = Modifier
             .fillMaxSize()
-            .dragToSelect(gridState, scope, isSelectable = { isImage(it) }, onRange = onSelectRange, onEnd = onRangeEnd),
-        contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = topPadding, bottom = 24.dp),
+            .dragToSelect(gridState, scope, isSelectable = { isImage(it) }, onRange = onSelectRange, onEnd = onRangeEnd, leftPadding = SIDE_PADDING),
+        contentPadding = PaddingValues(start = SIDE_PADDING, end = SIDE_PADDING, top = topPadding, bottom = 24.dp),
         horizontalArrangement = Arrangement.spacedBy(GAP),
         verticalArrangement = Arrangement.spacedBy(GAP),
     ) {
@@ -121,6 +121,7 @@ private fun SelectionMark(selected: Boolean, modifier: Modifier = Modifier) {
 
 private val CELL_SIZE = 108.dp
 private val GAP = 4.dp
+private val SIDE_PADDING = 12.dp
 private val SELECTED_INSET = 10.dp
 private val MARK_SIZE = 24.dp
 private val MARK_ICON = 16.dp

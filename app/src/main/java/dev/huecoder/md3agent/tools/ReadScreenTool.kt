@@ -18,8 +18,8 @@ class ReadScreenTool(
     )
 
     override suspend fun execute(arguments: JsonObject, settings: ToolSettings): ToolOutcome {
-        val snapshot = screen.latest.value
-            ?: return ToolOutcome.error("No screen captured: the assistant was not opened over another app")
+        val snapshot = screen.fresh()
+            ?: return ToolOutcome.error("No recent screen: the assistant was not opened over another app in the last few minutes")
         if (snapshot.text.isBlank()) {
             return ToolOutcome.error("The app ${snapshot.packageName ?: "on screen"} provided no text (it may be protected from reading)")
         }
@@ -29,7 +29,7 @@ class ReadScreenTool(
                 appendLine("App: ${snapshot.packageName ?: "unknown"}")
                 appendLine("Captured $ageSeconds s ago")
                 appendLine()
-                append(snapshot.text)
+                append(untrusted(snapshot.packageName ?: "screen", snapshot.text))
             },
         )
     }

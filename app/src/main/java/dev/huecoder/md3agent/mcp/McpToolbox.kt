@@ -109,7 +109,7 @@ class McpToolbox(
             val session = sessions[server.id] ?: server.oauth ?: return@withLock false
             if (session.refreshToken == null) return@withLock false
             try {
-                val renewed = oauth.refresh(session, server.url.trim())
+                val renewed = oauth.refresh(session, session.resource ?: server.url.trim())
                 sessions[server.id] = renewed
                 saveSession(server.id, renewed)
                 true

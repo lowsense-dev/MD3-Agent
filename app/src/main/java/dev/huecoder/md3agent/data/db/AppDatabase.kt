@@ -18,6 +18,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun memoryDao(): MemoryDao
     abstract fun folderDao(): FolderDao
     abstract fun reminderDao(): ReminderDao
+    abstract fun statsDao(): StatsDao
 
     companion object {
         private const val FILE_NAME = "assistant.db"

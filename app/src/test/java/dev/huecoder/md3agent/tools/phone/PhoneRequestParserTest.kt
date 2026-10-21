@@ -58,6 +58,13 @@ class PhoneRequestParserTest {
     }
 
     @Test
+    fun `typing keeps the text as given so a field can be cleared`() {
+        assertEquals(PhoneAction.Type(null, "", false), single("""{"action":"type","text":""}"""))
+        assertEquals(PhoneAction.Type(null, " two lines\n", false), single("""{"action":"type","text":" two lines\n"}"""))
+        assertThrows(ToolArgumentException::class.java) { parse("""{"action":"type"}""") }
+    }
+
+    @Test
     fun `say is cleaned and kept per step`() {
         val request = parse("""{"action":"press","key":"back","say":"**Going back**"}""")
 

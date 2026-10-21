@@ -42,6 +42,19 @@ class VoiceSettingsTest {
     }
 
     @Test
+    fun `dictation uses the chosen chat provider and falls back to the voice provider`() {
+        val gemini = ProviderProfile(id = "g", name = "Gemini", baseUrl = "https://g", format = ApiFormat.GEMINI)
+        val claude = ProviderProfile(id = "c", name = "Claude", baseUrl = "https://c", format = ApiFormat.ANTHROPIC)
+        val voice = settings(SpeechOutput.SYSTEM)
+
+        assertEquals(gemini to "gemini-2.5-flash", voice.copy(transcriptionChatProviderId = "g").transcriptionTarget(listOf(gemini)))
+        assertEquals(gemini to "custom", voice.copy(transcriptionChatProviderId = "g", transcriptionChatModel = " custom ").transcriptionTarget(listOf(gemini)))
+        assertEquals(openAi.asEndpointProfile() to "whisper-1", voice.copy(transcriptionChatProviderId = "gone").transcriptionTarget(listOf(gemini)))
+        assertEquals(openAi.asEndpointProfile() to "whisper-1", voice.copy(transcriptionChatProviderId = "c").transcriptionTarget(listOf(claude)))
+        assertNull(VoiceSettings(transcriptionChatProviderId = "gone").transcriptionTarget(listOf(gemini)))
+    }
+
+    @Test
     fun `agents saved before voices existed decode with the default voice`() {
         val agent = Json { ignoreUnknownKeys = true }.decodeFromString(AgentProfile.serializer(), """{"id":"main","name":"Assistant"}""")
         assertEquals(AgentVoice(), agent.voice)

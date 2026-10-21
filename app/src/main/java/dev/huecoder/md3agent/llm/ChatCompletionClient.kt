@@ -20,7 +20,10 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import okhttp3.Response
+import dev.huecoder.md3agent.net.bodyText
 import java.io.IOException
+import java.io.InterruptedIOException
+import java.util.concurrent.TimeUnit
 
 class ChatCompletionClient(private val httpClients: HttpClientProvider) {
     fun stream(
@@ -31,16 +34,23 @@ class ChatCompletionClient(private val httpClients: HttpClientProvider) {
         options: CompletionOptions = CompletionOptions(),
     ): Flow<CompletionEvent> = flow {
         val wire = ChatWire.of(provider.format)
-        val request = wire.request(ProviderEndpoint(provider), ChatRequest(model, turns, tools, options))
-        val call = httpClients.current().newCall(request)
-        try {
-            call.executeCancellable { response ->
-                if (!response.isSuccessful) throw httpError(response)
-                emitServerSentEvents(response, wire.newStream())
+        var emitted = false
+        val collector = FlowCollector<CompletionEvent> { event ->
+            emitted = true
+            this@flow.emit(event)
+        }
+        KeyRotation.withFailover(provider, canRetry = { !emitted }) { keyed ->
+            val request = wire.request(ProviderEndpoint(keyed), ChatRequest(model, turns, tools, options))
+            val call = httpClients.current().newCall(request)
+            try {
+                call.executeCancellable { response ->
+                    if (!response.isSuccessful) throw httpError(response)
+                    collector.emitServerSentEvents(response, wire.newStream())
+                }
+            } catch (e: IOException) {
+                if (call.isCanceled()) throw CancellationException("Stream cancelled", e)
+                throw ProviderException.Network(e)
             }
-        } catch (e: IOException) {
-            if (call.isCanceled()) throw CancellationException("Stream cancelled", e)
-            throw ProviderException.Network(e)
         }
     }.flowOn(Dispatchers.IO)
 
@@ -49,14 +59,22 @@ class ChatCompletionClient(private val httpClients: HttpClientProvider) {
         var finished = false
         var usageSeen = false
         while (!(finished && usageSeen)) {
-            val line = source.readUtf8Line() ?: break
+            val line = try {
+                source.readUtf8Line()
+            } catch (e: InterruptedIOException) {
+                if (finished) break else throw e
+            } ?: break
             if (!line.startsWith(SSE_DATA_PREFIX)) continue
             val data = line.removePrefix(SSE_DATA_PREFIX).trim()
             if (data == SSE_DONE) break
             if (data.isEmpty()) continue
             for (event in stream.events(parseChunk(data))) {
                 emit(event)
-                if (event is CompletionEvent.Finished) finished = true
+                if (event is CompletionEvent.Finished && !finished) {
+                    finished = true
+                    // Usage may trail the finish; a server that then just holds the connection must not stall the reply.
+                    source.timeout().timeout(USAGE_GRACE_SECONDS, TimeUnit.SECONDS)
+                }
                 if (event is CompletionEvent.Usage) usageSeen = true
             }
         }
@@ -76,8 +94,9 @@ class ChatCompletionClient(private val httpClients: HttpClientProvider) {
     }
 
     private fun httpError(response: Response): ProviderException.Http {
-        val body = response.body.string()
-        return ProviderException.Http(response.code, "HTTP ${response.code}: ${errorMessageOf(body)}")
+        val body = response.bodyText(ERROR_BODY_BYTES)
+        val retryAfter = response.header("Retry-After")?.trim()?.toLongOrNull()
+        return ProviderException.Http(response.code, "HTTP ${response.code}: ${errorMessageOf(body)}", retryAfter)
     }
 
     private fun errorMessageOf(body: String): String {
@@ -92,6 +111,8 @@ class ChatCompletionClient(private val httpClients: HttpClientProvider) {
     }
 
     private companion object {
+        const val USAGE_GRACE_SECONDS = 2L
+        const val ERROR_BODY_BYTES = 64L * 1024
         const val SSE_DATA_PREFIX = "data:"
         const val SSE_DONE = "[DONE]"
         const val ERROR_PREVIEW_CHARS = 300

@@ -93,14 +93,31 @@ class AttachmentStore(private val context: Context) {
 
     fun viewable(attachment: Attachment) = ViewableFile(file(attachment), attachment.name, attachment.mimeType)
 
+    // Every model round re-sends the whole history; encoding each picture once instead of per round saves a lot of IO.
+    private val contentCache = SizedLruCache<String, AttachmentContent>(MAX_CACHED_CHARS) { content ->
+        when (content) {
+            is AttachmentContent.Image -> content.dataUrl.length.toLong()
+            is AttachmentContent.Text -> content.text.length.toLong()
+            is AttachmentContent.Stored -> 0L
+        }
+    }
+
     suspend fun contentFor(attachment: Attachment): AttachmentContent? = withContext(Dispatchers.IO) {
         val file = file(attachment)
+        if (!attachment.forModel || !file.exists()) return@withContext null
+        val key = "${attachment.id}:${file.length()}:${file.lastModified()}"
+        contentCache.get(key)?.let { return@withContext it }
         when {
-            !attachment.forModel || !file.exists() -> null
             attachment.isImage -> AttachmentContent.Image("data:${attachment.mimeType};base64," + Base64.encodeToString(file.readBytes(), Base64.NO_WRAP))
             attachment.isText && file.length() <= MAX_INLINE_TEXT_BYTES -> AttachmentContent.Text(attachment.name, file.readText())
             else -> AttachmentContent.Stored(attachment.name, attachment.mimeType, file.length(), file.absolutePath)
-        }
+        }.also { contentCache.put(key, it) }
+    }
+
+    suspend fun duplicate(attachment: Attachment): Attachment = withContext(Dispatchers.IO) {
+        val copy = attachment.copy(id = newId(TextFormats.extension(attachment.id)))
+        file(attachment).takeIf { it.exists() }?.copyTo(file(copy))
+        copy
     }
 
     suspend fun delete(attachments: List<Attachment>) = withContext(Dispatchers.IO) {
@@ -189,6 +206,7 @@ class AttachmentStore(private val context: Context) {
         const val BYTES_PER_MB = 1024L * 1024
         const val MAX_FILE_BYTES = 64 * BYTES_PER_MB
         const val MAX_INLINE_TEXT_BYTES = 256 * 1024L
+        const val MAX_CACHED_CHARS = 32L * 1024 * 1024
         val SAFE_EXTENSION = Regex("[a-z0-9]{1,8}")
     }
 }

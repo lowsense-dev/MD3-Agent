@@ -4,6 +4,7 @@ import dev.huecoder.md3agent.data.settings.ShellMode
 import dev.huecoder.md3agent.data.settings.ToolPermission
 import dev.huecoder.md3agent.data.settings.ToolSettings
 import dev.huecoder.md3agent.llm.ToolSpec
+import dev.huecoder.md3agent.system.files.sharedStorageGranted
 import dev.huecoder.md3agent.system.shell.ShellAccess
 import dev.huecoder.md3agent.system.shell.ShellResult
 import dev.huecoder.md3agent.tools.Tool
@@ -33,7 +34,8 @@ class RunCommandTool(private val access: ShellAccess) : Tool {
 
     override fun promptNote(settings: ToolSettings): String = when (settings.access.shell) {
         ShellMode.SANDBOX -> "$NAME runs /system/bin/sh (toybox) inside this app's own sandbox, without root. " +
-            "The working directory is the app workspace ${access.workspace.path}; other apps' data and most of shared storage are not reachable."
+            "The working directory is the app workspace ${access.workspace.path}; other apps' data is not reachable, " +
+            if (sharedStorageGranted()) "but the app has all-files access, so all of shared storage (/sdcard) is readable and writable." else "and neither is most of shared storage."
         ShellMode.TERMUX -> "$NAME runs bash inside Termux as the Termux user, starting in its home directory. " +
             "Termux packages are available and more can be installed with pkg install -y. No root."
         ShellMode.SHIZUKU -> "$NAME runs sh through Shizuku with adb shell privileges: pm, am, cmd, settings, dumpsys, input and similar tools work, but there is no root."
@@ -44,11 +46,15 @@ class RunCommandTool(private val access: ShellAccess) : Tool {
         val command = arguments.requireString("command")
         val timeoutSeconds = (arguments.optionalInt("timeout_seconds") ?: DEFAULT_TIMEOUT_S.toInt()).toLong().coerceIn(1, MAX_TIMEOUT_S)
         val result = access.shell(settings.access.shell).run(command, timeoutSeconds * MS_PER_SECOND)
-        return ToolOutcome(result.describe(timeoutSeconds), isError = result.exitCode == null)
+        return ToolOutcome(result.describe(timeoutSeconds, settings.access.shell), isError = result.exitCode == null)
     }
 
-    private fun ShellResult.describe(timeoutSeconds: Long): String = buildString {
-        if (timedOut) appendLine("Killed after $timeoutSeconds s without finishing") else appendLine("Exit code: ${exitCode ?: "unknown"}")
+    private fun ShellResult.describe(timeoutSeconds: Long, mode: ShellMode): String = buildString {
+        when {
+            !timedOut -> appendLine("Exit code: ${exitCode ?: "unknown"}")
+            mode == ShellMode.TERMUX -> appendLine("Stopped waiting after $timeoutSeconds s, the command may still be running in Termux")
+            else -> appendLine("Killed the shell after $timeoutSeconds s without finishing, programs it started may still be running")
+        }
         if (stdout.isNotEmpty()) append("stdout:\n").appendLine(stdout.clipped())
         if (stderr.isNotEmpty()) append("stderr:\n").appendLine(stderr.clipped())
         if (stdout.isEmpty() && stderr.isEmpty()) appendLine("No output")

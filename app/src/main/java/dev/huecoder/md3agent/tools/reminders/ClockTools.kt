@@ -50,19 +50,22 @@ class SetAlarmTool(private val clock: ClockApp) : Tool {
     override suspend fun execute(arguments: JsonObject, settings: ToolSettings): ToolOutcome {
         val hour = arguments.requireInt("hour", 0..23)
         val minute = arguments.requireInt("minute", 0..59)
-        val days = arguments.optionalArray("days").map { parseDay((it as? JsonPrimitive)?.contentOrNull) }.toSet()
+        val days = arguments.optionalArray("days").map { parseDay((it as? JsonPrimitive)?.contentOrNull.orEmpty()) }.toSet()
         val result = withContext(Dispatchers.Main) { clock.setAlarm(hour, minute, arguments.optionalString("label"), days) }
         val repeat = if (days.isEmpty()) "once" else days.sorted().joinToString { it.name.lowercase() }
         return result.toOutcome("Alarm set for %02d:%02d, %s".format(hour, minute, repeat))
     }
 
-    private fun parseDay(raw: String?): DayOfWeek =
-        DayOfWeek.entries.firstOrNull { day -> raw != null && day.name.startsWith(raw.trim().uppercase().take(DAY_PREFIX)) }
-            ?: throw ToolArgumentException("Unknown weekday \"$raw\"")
-
     companion object {
         const val NAME = "set_alarm"
         private const val DAY_PREFIX = 3
+        private const val MIN_DAY_CHARS = 2
+
+        fun parseDay(raw: String): DayOfWeek {
+            val prefix = raw.trim().uppercase().take(DAY_PREFIX)
+            val matches = DayOfWeek.entries.filter { prefix.length >= MIN_DAY_CHARS && it.name.startsWith(prefix) }
+            return matches.singleOrNull() ?: throw ToolArgumentException("Unknown or ambiguous weekday \"$raw\", use full names like MONDAY")
+        }
     }
 }
 

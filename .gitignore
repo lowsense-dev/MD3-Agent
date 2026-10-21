@@ -7,3 +7,5 @@ build/
 .kotlin/
 dist/
 __pycache__/
+*.apk
+/tools/ksu-module/*.zip

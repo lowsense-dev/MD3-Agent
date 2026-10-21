@@ -11,7 +11,6 @@ import dev.huecoder.md3agent.data.models.ModelCatalog
 import dev.huecoder.md3agent.ui.text.UiText
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 data class ProviderForm(
     val id: String,
@@ -24,11 +23,21 @@ data class ProviderForm(
 ) {
     fun withFormat(next: ApiFormat) = copy(format = next, baseUrl = next.adoptBaseUrl(baseUrl))
 
+    // A name the user typed survives switching presets; an empty one or another preset's name follows the preset.
+    fun withPreset(preset: ProviderPreset) = copy(
+        format = preset.format,
+        baseUrl = preset.baseUrl,
+        name = if (name.isBlank() || ProviderPreset.isPresetName(name)) preset.displayName else name,
+    )
+
+    val preset: ProviderPreset?
+        get() = ProviderPreset.matching(format, baseUrl)
+
     val baseUrlError: UiText?
-        get() = if (baseUrl.isBlank() || baseUrl.trim().toHttpUrlOrNull() != null) null else UiText.Resource(R.string.provider_base_url_invalid)
+        get() = endpointUrlError(baseUrl, carriesSecrets = apiKey.isNotBlank() || headers.any { it.name.isNotBlank() }, R.string.provider_base_url_invalid)
 
     val canSave: Boolean
-        get() = name.isNotBlank() && baseUrl.isNotBlank() && baseUrlError == null
+        get() = name.isNotBlank() && baseUrl.isNotBlank() && baseUrlError == null && HeaderRules.allValid(headers)
 
     fun toProfile() = ProviderProfile(
         id = id,
@@ -74,7 +83,7 @@ class ProviderEditorViewModel(
     fun save(onSaved: () -> Unit) {
         val current = draft.current?.takeIf { it.canSave } ?: return
         viewModelScope.launch {
-            settings.upsertProvider(current.toProfile())
+            if (!settings.upsertProvider(current.toProfile())) return@launch
             draft.markSaved()
             onSaved()
         }
@@ -83,7 +92,7 @@ class ProviderEditorViewModel(
     fun delete(onDeleted: () -> Unit) {
         val id = providerId ?: return onDeleted()
         viewModelScope.launch {
-            settings.deleteProvider(id)
+            if (!settings.deleteProvider(id)) return@launch
             catalog.forget(id)
             onDeleted()
         }

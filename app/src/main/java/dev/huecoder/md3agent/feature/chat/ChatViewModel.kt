@@ -1,8 +1,12 @@
 package dev.huecoder.md3agent.feature.chat
 
 import android.net.Uri
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dev.huecoder.md3agent.llm.models.ModelInfo
+import dev.huecoder.md3agent.conversation.ContextUsage
+import dev.huecoder.md3agent.conversation.Compaction
 import dev.huecoder.md3agent.R
 import dev.huecoder.md3agent.conversation.ApprovalDecision
 import dev.huecoder.md3agent.conversation.ConversationRunner
@@ -33,6 +37,7 @@ import dev.huecoder.md3agent.ui.text.UiText
 import dev.huecoder.md3agent.voice.ReplySpeaker
 import dev.huecoder.md3agent.voice.SpeechSynthesizer
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -40,9 +45,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -66,6 +73,8 @@ data class ChatUiState(
     val isImporting: Boolean = false,
     val look: ChatLook = ChatLook.Default,
     val focusItemId: String? = null,
+    val context: ContextUsage? = null,
+    val isCompacting: Boolean = false,
 ) {
     val isStarted: Boolean get() = chatId != null
 
@@ -89,15 +98,20 @@ class ChatViewModel(
     private val catalog: ModelCatalog,
     private val appScope: CoroutineScope,
     synthesizers: (VoiceSettings, AgentProfile) -> SpeechSynthesizer,
+    savedState: SavedStateHandle = SavedStateHandle(),
 ) : ViewModel() {
-    private val chatId = MutableStateFlow(initialChatId)
+    private val chatId = savedState.getMutableStateFlow(CHAT_ID_KEY, initialChatId)
     private val pendingFocus = MutableStateFlow(focusMessageId)
     private val _errors = MutableStateFlow<UiText?>(null)
     private val pending = MutableStateFlow(PendingAttachments())
     private val pendingSelection = MutableStateFlow<ModelSelection?>(null)
     private val pendingAgentId = MutableStateFlow<String?>(null)
+    private val _restoredText = MutableStateFlow<String?>(null)
+    private val _editing = MutableStateFlow<MessageEdit?>(null)
 
     val errors: StateFlow<UiText?> = _errors.asStateFlow()
+    val restoredText: StateFlow<String?> = _restoredText.asStateFlow()
+    val editing: StateFlow<MessageEdit?> = _editing.asStateFlow()
 
     private val appSettings = settings.settings
     private val voice = appSettings.map { it.voice }.stateIn(viewModelScope, SharingStarted.Eagerly, VoiceSettings())
@@ -107,6 +121,9 @@ class ChatViewModel(
     private var inputFromVoice = false
 
     val speakingId: StateFlow<String?> = speaker.speakingId
+
+    val yolo: StateFlow<Boolean> = chatId.flatMapLatest { id -> id?.let(approvals::yolo) ?: flowOf(false) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), false)
 
     val pendingPrompt: StateFlow<PendingPrompt?> = combine(chatId, prompts.pending) { id, asked -> id?.let(asked::get) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), null)
@@ -119,20 +136,28 @@ class ChatViewModel(
                     ChatUiState(agentId = agent.id, agentName = agent.name, showTokenUsage = current.chat.showTokenUsage, typing = current.chat.typing).withSelection(chosen ?: current.activeSelection)
                 }
             } else {
-                combine(chats.observeChat(id), chats.observeMessages(id), runner.drafts, appSettings, pendingFocus) { chat, messages, drafts, current, focus ->
+                combine(chats.observeChat(id), chats.observeMessages(id), runner.drafts.combine(runner.compacting, ::Pair), appSettings, pendingFocus) { chat, messages, work, current, focus ->
+                    val (drafts, compacting) = work
                     val agent = current.agents.forChat(chat?.agentId)
-                    buildState(id, chat, messages, drafts[id], focus)
+                    chat?.providerId?.let { catalog.loadIfMissing(it) }
+                    buildState(id, chat, messages, drafts[id], focus, isCompacting = id in compacting)
                         .copy(agentId = agent.id, agentName = agent.name, showTokenUsage = current.chat.showTokenUsage, typing = current.chat.typing)
                         .withSelection(chat?.selection ?: current.activeSelection)
                 }
             }
         }
         .combine(pending) { state, attached -> state.copy(pendingAttachments = attached.items, isImporting = attached.importing > 0) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), ChatUiState(chatId = initialChatId))
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), ChatUiState(chatId = chatId.value))
 
     init {
         viewModelScope.launch {
-            state.map { it.messages.lastOrNull() as? ChatItem.Reply }.filterNotNull().distinctUntilChanged().collect(narration::onLatest)
+            // Subscribing only while narrating lets the state stop with the screen the rest of the time (WhileSubscribed).
+            narration.listening
+                .flatMapLatest { listening -> if (listening) state.map { it.messages.lastOrNull() as? ChatItem.Reply } else emptyFlow() }
+                .filterNotNull()
+                .distinctUntilChanged()
+                .collect(narration::onLatest)
         }
         viewModelScope.launch {
             speaker.failures.collect { _errors.value = UiText.Resource(R.string.voice_speak_failed, listOf(it)) }
@@ -147,15 +172,22 @@ class ChatViewModel(
         val current = pending.value
         if ((text.isBlank() && current.items.isEmpty()) || current.importing > 0) return
         val attached = pending.value.items
+        val edit = _editing.value
+        _editing.value = null
         pending.update { it.copy(items = emptyList()) }
         if (shouldNarrate(fromVoice = inputFromVoice)) narration.arm(latestReplyId())
         inputFromVoice = false
         viewModelScope.launch {
             val id = chatId.value
             try {
-                if (id == null) chatId.value = runner.startChat(text, attached, pendingSelection.value, state.value.agentId).id else runner.send(id, text, attached)
+                when {
+                    id == null -> chatId.value = runner.startChat(text, attached, pendingSelection.value, state.value.agentId).id
+                    edit != null -> runner.resend(id, edit.messageId, text, attached)
+                    else -> runner.send(id, text, attached)
+                }
             } catch (e: NoModelConfiguredException) {
                 pending.update { it.copy(items = attached + it.items) }
+                _restoredText.value = text
                 _errors.value = UiText.Resource(R.string.chat_error_no_model)
             }
         }
@@ -219,7 +251,34 @@ class ChatViewModel(
 
     fun removeAttachment(attachment: Attachment) {
         pending.update { it.copy(items = it.items - attachment) }
+        // The edited message still owns its files until the edit is sent.
+        if (_editing.value?.original?.contains(attachment) == true) return
         viewModelScope.launch { attachments.delete(listOf(attachment)) }
+    }
+
+    fun startEdit(message: ChatItem.User, composerText: String) {
+        if (state.value.isStreaming) return
+        val previous = _editing.value
+        pending.update { it.copy(items = it.items - previous?.original.orEmpty().toSet() + message.attachments) }
+        _editing.value = MessageEdit(message.id, message.attachments, previous?.previousText ?: composerText)
+    }
+
+    fun cancelEdit(): String? {
+        val edit = _editing.value ?: return null
+        _editing.value = null
+        pending.update { it.copy(items = it.items - edit.original.toSet()) }
+        return edit.previousText
+    }
+
+    fun fork(messageId: String, title: String, onForked: (String) -> Unit) {
+        val id = chatId.value ?: return
+        viewModelScope.launch {
+            try {
+                chats.fork(id, messageId, title)?.let(onForked)
+            } catch (e: IOException) {
+                _errors.value = UiText.Resource(R.string.chat_fork_failed)
+            }
+        }
     }
 
     fun stop() {
@@ -231,6 +290,10 @@ class ChatViewModel(
 
     fun respondToApproval(call: ToolCallUi, decision: ApprovalDecision) {
         chatId.value?.let { approvals.respond(it, call.id, decision) }
+    }
+
+    fun setYolo(on: Boolean) {
+        chatId.value?.let { approvals.setYolo(it, on) }
     }
 
     fun regenerate(reply: ChatItem.Reply) {
@@ -257,13 +320,22 @@ class ChatViewModel(
 
     private fun latestReplyId(): String? = (state.value.messages.lastOrNull() as? ChatItem.Reply)?.id
 
+    fun consumeRestoredText() {
+        _restoredText.value = null
+    }
+
     fun consumeError() {
         _errors.value = null
     }
 
-    private fun buildState(id: String, chat: ChatEntity?, messages: List<MessageEntity>, draft: StreamingDraft?, focus: String?): ChatUiState {
-        val items = ChatTimeline.build(messages, draft)
+    private val replyMemo = ChatTimeline.ReplyMemo()
+
+    private fun buildState(id: String, chat: ChatEntity?, messages: List<MessageEntity>, draft: StreamingDraft?, focus: String?, isCompacting: Boolean): ChatUiState {
+        val items = ChatTimeline.build(messages, draft, replyMemo) { catalog.known(chat?.providerId, it) }
+        val window = chat?.modelId?.let { modelId -> (catalog.known(chat.providerId, modelId) ?: ModelInfo(modelId)).contextWindow }
         return ChatUiState(
+            context = Compaction.usage(messages, window),
+            isCompacting = isCompacting,
             chatId = id,
             title = chat?.title?.let(UiText::Raw) ?: ChatUiState.NEW_CHAT_TITLE,
             modelId = chat?.modelId,
@@ -274,19 +346,26 @@ class ChatViewModel(
         )
     }
 
+    fun compact() {
+        chatId.value?.let(runner::compact)
+    }
+
     fun focusShown() {
         pendingFocus.value = null
     }
 
     override fun onCleared() {
         speaker.stop()
-        val unsent = pending.value.items
+        val unsent = pending.value.items - _editing.value?.original.orEmpty().toSet()
         if (unsent.isNotEmpty()) appScope.launch { attachments.delete(unsent) }
     }
+
+    data class MessageEdit(val messageId: String, val original: List<Attachment>, val previousText: String)
 
     private data class PendingAttachments(val items: List<Attachment> = emptyList(), val importing: Int = 0)
 
     private companion object {
         const val STOP_TIMEOUT_MS = 5_000L
+        const val CHAT_ID_KEY = "chatId"
     }
 }

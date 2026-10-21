@@ -41,6 +41,7 @@ data class ModelPickerState(
     val totalCount: Int = 0,
     val isRefreshing: Boolean = false,
     val error: UiText? = null,
+    val customId: String? = null,
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -77,11 +78,13 @@ class ModelPickerViewModel(
 
     private val filters = combine(query, capabilities, vendor) { text, caps, chosenVendor -> Filters(text.trim(), caps, chosenVendor) }
 
-    private val listing = combine(allRows, filters) { rows, active -> rows to active.apply(rows) }.flowOn(Dispatchers.Default)
+    private val listing = combine(allRows, filters) { rows, active ->
+        Listing(rows, active.apply(rows), active.text.takeIf { text -> text.isNotEmpty() && rows.none { it.info.id == text } })
+    }.flowOn(Dispatchers.Default)
 
     private val status = combine(refreshing, error) { isRefreshing, failure -> isRefreshing to failure }
 
-    val state: StateFlow<ModelPickerState> = combine(providers, provider, listing, status) { list, current, (rows, filtered), (isRefreshing, failure) ->
+    val state: StateFlow<ModelPickerState> = combine(providers, provider, listing, status) { list, current, (rows, filtered, custom), (isRefreshing, failure) ->
         ModelPickerState(
             providers = list,
             providerId = current?.id,
@@ -90,6 +93,7 @@ class ModelPickerViewModel(
             totalCount = rows.size,
             isRefreshing = isRefreshing,
             error = failure,
+            customId = custom?.takeIf { current != null },
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), ModelPickerState())
 
@@ -137,6 +141,10 @@ class ModelPickerViewModel(
         val keptEffort = current?.reasoningEffort?.takeIf { it in row.traits.reasoningEfforts }
         return ModelSelection(providerKey, row.info.id, keptEffort)
     }
+
+    fun customSelection(modelId: String): ModelSelection? = state.value.providerId?.let { ModelSelection(it, modelId) }
+
+    private data class Listing(val rows: List<ModelRow>, val filtered: List<ModelRow>, val custom: String?)
 
     private data class Filters(val text: String, val capabilities: Set<CapabilityFilter>, val vendor: ModelVendor?) {
         fun apply(rows: List<ModelRow>): List<ModelRow> = rows.filter { row ->

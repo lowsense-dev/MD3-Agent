@@ -121,8 +121,8 @@ class MemoryStore(
         const val MAX_CONTENT = 4_000
         private const val TAG = "MemoryStore"
         private const val PROBE_TEXT = "ping"
-        private const val ID_LENGTH = 5
+        private const val ID_LENGTH = 6
         private const val ID_ATTEMPTS = 20
-        private const val ID_ALPHABET = "abcdefghijkmnpqrstuvwxyz23456789"
+        private const val ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
     }
 }

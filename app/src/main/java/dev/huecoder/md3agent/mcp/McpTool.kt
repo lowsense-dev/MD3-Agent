@@ -10,6 +10,7 @@ import dev.huecoder.md3agent.conversation.UserPrompts
 import dev.huecoder.md3agent.tools.ContextualTool
 import dev.huecoder.md3agent.tools.ToolContext
 import dev.huecoder.md3agent.tools.ToolOutcome
+import dev.huecoder.md3agent.tools.untrusted
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -44,7 +45,7 @@ class McpTool(
         val texts = result.content.filterIsInstance<McpContent.Text>().map { it.text }
         val images = result.content.filterIsInstance<McpContent.Image>().mapIndexedNotNull { index, image -> storeImage(index, image) }
         val text = texts.joinToString("\n\n").ifBlank { if (images.isEmpty()) "The tool returned nothing" else "The tool returned ${images.size} image(s), attached below" }
-        return ToolOutcome(text.take(MAX_RESULT_CHARS), isError = result.isError, attachments = images)
+        return ToolOutcome(untrusted("mcp:$serverName", text.take(MAX_RESULT_CHARS)), isError = result.isError, attachments = images)
     }
 
     private suspend fun storeImage(index: Int, image: McpContent.Image): Attachment? {

@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
@@ -76,11 +77,11 @@ class SettingsRepositoryTest {
         runCurrent()
         cipher.decryptions = 0
 
-        repository.updateChat { it.copy(showTokenUsage = true) }
+        repository.updateChat { it.copy(showTokenUsage = false) }
         runCurrent()
 
         assertEquals(0, cipher.decryptions)
-        assertTrue(repository.settings.first().chat.showTokenUsage)
+        assertFalse(repository.settings.first().chat.showTokenUsage)
     }
 
     @Test
@@ -122,6 +123,60 @@ class SettingsRepositoryTest {
 
         cipher.broken = false
         assertEquals(listOf(provider), reader.current().providers)
+    }
+
+    @Test
+    fun `an edit during a failed decryption leaves the stored secrets alone`() = runTest {
+        val store = store()
+        val writer = repository(store)
+        writer.upsertProvider(provider)
+        writer.updateVoice { it.copy(language = "ru") }
+
+        cipher.broken = true
+        val reader = repository(store)
+        reader.upsertProvider(provider.copy(id = "p2"))
+        reader.updateVoice { it.copy(language = "en") }
+
+        cipher.broken = false
+        assertEquals(listOf(provider), reader.current().providers)
+        assertEquals("ru", reader.current().voice.language)
+    }
+
+    @Test
+    fun `a refused write reports itself`() = runTest {
+        val store = store()
+        repository(store).upsertProvider(provider)
+        cipher.broken = true
+        val reader = repository(store)
+        val reported = backgroundScope.async { reader.writeFailures.first() }
+        runCurrent()
+
+        assertFalse("provider write", reader.upsertProvider(provider.copy(id = "p2")))
+        assertFalse("voice write", reader.updateVoice { it.copy(language = "en") })
+        runCurrent()
+        assertTrue("reported", reported.isCompleted)
+    }
+
+    @Test
+    fun `providers that no longer decode are kept, not replaced by defaults`() = runTest {
+        val store = store()
+        val unreadable = cipher.encrypt(PROVIDERS_FROM_NEWER_BUILD)
+        store.edit { it[stringPreferencesKey(PROVIDERS_KEY)] = unreadable }
+        val repository = repository(store)
+
+        assertTrue(repository.current().providers.isEmpty())
+        assertFalse(repository.upsertProvider(provider))
+        assertEquals(unreadable, store.data.first()[stringPreferencesKey(PROVIDERS_KEY)])
+    }
+
+    @Test
+    fun `plain settings that no longer decode are kept on write`() = runTest {
+        val store = store()
+        store.edit { it[stringPreferencesKey(CHAT_KEY)] = CORRUPT_JSON }
+        val repository = repository(store)
+
+        assertFalse(repository.updateChat { it.copy(showTokenUsage = false) })
+        assertEquals(CORRUPT_JSON, store.data.first()[stringPreferencesKey(CHAT_KEY)])
     }
 
     @Test
@@ -178,6 +233,9 @@ class SettingsRepositoryTest {
     private companion object {
         const val SUBSCRIBERS = 20
         const val PROVIDERS_KEY = "providers_encrypted"
+        const val CHAT_KEY = "chat"
+        const val CORRUPT_JSON = "{not json"
+        const val PROVIDERS_FROM_NEWER_BUILD = """[{"id":"p1","name":"Local","baseUrl":"http://localhost","apiKey":"secret","format":"SOME_FUTURE_FORMAT"}]"""
         const val PROVIDERS_WITH_MODEL_LIST =
             """[{"id":"p1","name":"Local","baseUrl":"http://localhost","apiKey":"secret","models":["m","n"],"defaultModel":"m"}]"""
     }

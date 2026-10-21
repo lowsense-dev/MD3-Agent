@@ -6,6 +6,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 
 object ModelInfoParser {
@@ -56,7 +57,14 @@ object ModelInfoParser {
                 else -> null
             },
             toolUse = parameters?.contains("tools") ?: capabilities?.flag("function_calling", "tools") ?: entry.flag("supports_tools"),
+            price = entry.obj("pricing")?.let(::priceOf),
         )
+    }
+
+    private fun priceOf(pricing: JsonObject): ModelPrice? {
+        val prompt = pricing.price("prompt") ?: return null
+        val completion = pricing.price("completion") ?: return null
+        return ModelPrice(prompt, completion, pricing.price("input_cache_read"))
     }
 
     private fun outputOf(modalities: List<String>): ModelOutput? {
@@ -81,6 +89,8 @@ object ModelInfoParser {
     private fun JsonObject.string(name: String) = (this[name] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull?.takeIf { it.isNotBlank() }
 
     private fun JsonObject.int(name: String) = (this[name] as? JsonPrimitive)?.intOrNull
+
+    private fun JsonObject.price(name: String) = (this[name] as? JsonPrimitive)?.doubleOrNull?.takeIf { it >= 0 }
 
     private fun JsonObject.strings(name: String) =
         (this[name] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.lowercase() }

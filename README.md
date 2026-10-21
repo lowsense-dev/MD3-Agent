@@ -70,7 +70,7 @@ The project is at version 0.8, so expect some rough edges. Bug reports are welco
 
 **Tools**
 
-29 built-in tools plus any number of [MCP](https://modelcontextprotocol.io) servers. Each tool is Off, Ask or Auto, globally in Settings and per agent in the agent editor. An Ask tool pauses the reply and shows a card with the arguments: Allow, Deny, or Always allow in this session. A notification asks if the app is in the background.
+30 built-in tools plus any number of [MCP](https://modelcontextprotocol.io) servers. Each tool is Off, Ask or Auto, globally in Settings and per agent in the agent editor. An Ask tool pauses the reply and shows a card with the arguments: Allow, Deny, or Always allow in this session. A notification asks if the app is in the background.
 
 <details>
 <summary>All built-in tools</summary>
@@ -87,7 +87,7 @@ The project is at version 0.8, so expect some rough edges. Bug reports are welco
 | `show_chart` | Line, bar or pie chart drawn in the chat | Auto |
 | `show_diagram` | Flow diagram drawn in the chat | Auto |
 | `ask_user` | A multiple-choice question that waits for you | Auto |
-| `memory_save`, `memory_update`, `memory_delete`, `memory_search` | Manage and search memories | Auto |
+| `memory_add`, `memory_list`, `memory_update`, `memory_delete`, `memory_search` | Manage and search memories, each with a 6-character id | Auto |
 | `run_command` | Shell command in the sandbox, Termux, Shizuku or root | Ask |
 | `run_python` | Python 3.13 script, standard library only | Ask |
 | `list_files`, `read_file` | Browse and read files inside the allowed scope | Auto |

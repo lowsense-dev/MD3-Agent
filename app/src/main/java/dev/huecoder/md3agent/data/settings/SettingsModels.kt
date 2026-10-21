@@ -11,7 +11,10 @@ data class ProviderProfile(
     val apiKey: String = "",
     val extraHeaders: List<HeaderEntry> = emptyList(),
     val format: ApiFormat = ApiFormat.OPENAI,
-)
+) {
+    val apiKeys: List<String>
+        get() = apiKey.lines().map { it.trim() }.filter { it.isNotEmpty() }
+}
 
 @Serializable
 data class HeaderEntry(val name: String, val value: String)

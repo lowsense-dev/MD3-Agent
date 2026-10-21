@@ -26,7 +26,8 @@ import dev.huecoder.md3agent.data.db.AppDatabase
 import dev.huecoder.md3agent.data.memory.MemoryStore
 import dev.huecoder.md3agent.llm.EmbeddingClient
 import dev.huecoder.md3agent.tools.memory.MemoryDeleteTool
-import dev.huecoder.md3agent.tools.memory.MemorySaveTool
+import dev.huecoder.md3agent.tools.memory.MemoryAddTool
+import dev.huecoder.md3agent.tools.memory.MemoryListTool
 import dev.huecoder.md3agent.tools.memory.MemorySearchTool
 import dev.huecoder.md3agent.tools.memory.MemoryUpdateTool
 import dev.huecoder.md3agent.data.settings.SecretCipher
@@ -83,6 +84,9 @@ import dev.huecoder.md3agent.voice.SpeechSynthesizer
 import dev.huecoder.md3agent.voice.SystemSpeechSynthesizer
 import dev.huecoder.md3agent.voice.VoiceRecorder
 import kotlinx.coroutines.CoroutineScope
+import android.util.Log
+import android.widget.Toast
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -95,7 +99,8 @@ import java.io.File
 
 class AppContainer(context: Context) {
     val appContext: Context = context.applicationContext
-    val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    // Background work must never take the whole app down; failures are logged where they were not already handled.
+    val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default + CoroutineExceptionHandler { _, e -> Log.e("AppContainer", "Background task failed", e) })
     val visibility = AppVisibility()
 
     val settings = SettingsRepository(context, SecretCipher(), applicationScope)
@@ -106,6 +111,7 @@ class AppContainer(context: Context) {
     val attachments = AttachmentStore(context)
     val chats = ChatRepository(database.chatDao(), database.messageDao(), database.folderDao(), attachments, ChatDrafts(appContext))
     val searchHistory = SearchHistory(appContext)
+    val usageStats = database.statsDao()
     val reminders = ReminderRepository(database.reminderDao(), ReminderAlarms(appContext))
     val memories = MemoryStore(database.memoryDao(), EmbeddingClient(httpClients), settings.settings.map { it.tools.memory })
 
@@ -151,7 +157,8 @@ class AppContainer(context: Context) {
             ShowChartTool(),
             ShowDiagramTool(),
             AskUserTool(prompts),
-            MemorySaveTool(memories),
+            MemoryAddTool(memories),
+            MemoryListTool(memories),
             MemoryUpdateTool(memories),
             MemoryDeleteTool(memories),
             MemorySearchTool(memories),
@@ -199,6 +206,12 @@ class AppContainer(context: Context) {
     )
 
     init {
+        applicationScope.launch { reminders.restore() }
+        applicationScope.launch {
+            settings.writeFailures.collect {
+                withContext(Dispatchers.Main) { Toast.makeText(appContext, R.string.settings_write_refused, Toast.LENGTH_LONG).show() }
+            }
+        }
         applicationScope.launch {
             settings.settings.map { it.tools.mcpServers }.distinctUntilChanged().collect(mcp::sync)
         }

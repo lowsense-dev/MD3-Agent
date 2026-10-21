@@ -53,7 +53,7 @@ class NativeChatFormatsTest {
         ChatTurn(ChatTurn.Role.USER, "что тут?", imageUrls = listOf("data:image/jpeg;base64,AAA")),
         ChatTurn(ChatTurn.Role.ASSISTANT, "", toolCalls = listOf(ToolCall("c1", "read_screen", """{"full":true}"""))),
         ChatTurn(ChatTurn.Role.TOOL, "текст экрана", toolCallId = "c1"),
-        ChatTurn(ChatTurn.Role.USER, "картинки от тула", imageUrls = listOf("data:image/png;base64,BBB"), cacheBreakpoint = true),
+        ChatTurn(ChatTurn.Role.USER, ChatTurn.TOOL_IMAGES_NOTE, imageUrls = listOf("data:image/png;base64,BBB"), cacheBreakpoint = true),
     )
 
     private val tool = ToolSpec("read_screen", "Читает экран", Json.parseToJsonElement("""{"type":"object","properties":{}}""").jsonObject)
@@ -96,6 +96,16 @@ class NativeChatFormatsTest {
         val fresh = sentBody().second
         assertEquals("8192", fresh["thinking"]!!.jsonObject["budget_tokens"]!!.jsonPrimitive.content)
         assertNull(sentBody().second["thinking"])
+    }
+
+    @Test
+    fun `anthropic thinks again when the user writes after a reply that ended in a tool call`() = runTest {
+        server.enqueue(sse("""{"type":"message_stop"}"""))
+        val history = toolHistory + ChatTurn(ChatTurn.Role.USER, "а теперь другое")
+
+        client.stream(provider(ApiFormat.ANTHROPIC), "claude-x", history, options = CompletionOptions(reasoningEffort = ReasoningEffort.MEDIUM)).toList()
+
+        assertEquals("8192", sentBody().second["thinking"]!!.jsonObject["budget_tokens"]!!.jsonPrimitive.content)
     }
 
     @Test

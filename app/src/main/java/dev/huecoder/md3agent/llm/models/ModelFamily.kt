@@ -76,6 +76,21 @@ internal object ModelHeuristics {
             "grok-[4-9]|glm-[0-9.]+v|muse|step-?3|seed-?1[.][5-9]|nova-(lite|pro|premier)|phi-4-multimodal|minimax-(m2[.]5|vl)",
     )
 
+    // shortcut: published windows of the common model lines, for catalogs that do not report one (OpenAI, Anthropic, DeepSeek).
+    private val CONTEXT_WINDOWS = listOf(
+        Regex("gpt-4[.]1|gemini|llama-?4") to 1_048_576,
+        Regex("gpt-5|codex") to 400_000,
+        Regex("claude|(?<![a-z0-9])o[1-9](?![0-9])") to 200_000,
+        Regex("grok-[4-9]|kimi-k2") to 256_000,
+        Regex("gpt-4o|gpt-4-turbo|deepseek|mistral|glm-4[.][5-9]|glm-[5-9]") to 128_000,
+        Regex("gpt-oss|qwen3") to 131_072,
+    )
+
+    fun contextWindow(modelId: String): Int? {
+        val id = modelId.lowercase()
+        return CONTEXT_WINDOWS.firstOrNull { (pattern, _) -> pattern.containsMatchIn(id) }?.second
+    }
+
     fun guess(modelId: String): HeuristicTraits {
         val id = modelId.lowercase()
         val output = when {

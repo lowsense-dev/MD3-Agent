@@ -1,5 +1,9 @@
 package dev.huecoder.md3agent.feature.chat
 
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.UriHandler
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -35,7 +39,9 @@ import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.composables.icons.materialsymbols.MaterialSymbols
+import com.composables.icons.materialsymbols.rounded.Call_split
 import com.composables.icons.materialsymbols.rounded.Content_copy
+import com.composables.icons.materialsymbols.rounded.Edit
 import com.composables.icons.materialsymbols.rounded.Error
 import com.composables.icons.materialsymbols.rounded.Refresh
 import com.composables.icons.materialsymbols.rounded.Stop_circle
@@ -60,7 +66,7 @@ private val ActionTouchSize = 36.dp
 private val ActionIconSize = 18.dp
 
 @Composable
-fun UserMessage(message: ChatItem.User, modifier: Modifier = Modifier) {
+fun UserMessage(message: ChatItem.User, modifier: Modifier = Modifier, onEdit: (() -> Unit)? = null, onFork: (() -> Unit)? = null) {
     var actionsShown by rememberSaveable(message.id) { mutableStateOf(false) }
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
@@ -88,9 +94,23 @@ fun UserMessage(message: ChatItem.User, modifier: Modifier = Modifier) {
                     enter = expandVertically(LayoutMotion.settle()) + fadeIn(),
                     exit = shrinkVertically(LayoutMotion.settle()) + fadeOut(),
                 ) {
-                    ActionIcon(MaterialSymbols.Rounded.Content_copy, stringResource(R.string.chat_copy)) {
-                        scope.launch { clipboard.copyText(message.content) }
-                        actionsShown = false
+                    Row {
+                        ActionIcon(MaterialSymbols.Rounded.Content_copy, stringResource(R.string.chat_copy)) {
+                            scope.launch { clipboard.copyText(message.content) }
+                            actionsShown = false
+                        }
+                        onEdit?.let { edit ->
+                            ActionIcon(MaterialSymbols.Rounded.Edit, stringResource(R.string.chat_edit)) {
+                                edit()
+                                actionsShown = false
+                            }
+                        }
+                        onFork?.let { fork ->
+                            ActionIcon(MaterialSymbols.Rounded.Call_split, stringResource(R.string.chat_fork)) {
+                                fork()
+                                actionsShown = false
+                            }
+                        }
                     }
                 }
             }
@@ -110,6 +130,29 @@ fun AssistantReply(
     onApproval: (ToolCallUi, ApprovalDecision) -> Unit,
     modifier: Modifier = Modifier,
     avatarHandoff: AvatarHandoff? = null,
+    onFork: (() -> Unit)? = null,
+) {
+    // Links in replies come from the model or the web: open only web pages, never intent:, file: or other schemes.
+    val base = LocalUriHandler.current
+    val webOnly = remember(base) { WebLinksOnlyUriHandler(base) }
+    CompositionLocalProvider(LocalUriHandler provides webOnly) {
+        AssistantReplyContent(reply, showUsage, typing, isSpeaking, onRegenerate, onToggleSpeech, onSend, onApproval, modifier, avatarHandoff, onFork)
+    }
+}
+
+@Composable
+private fun AssistantReplyContent(
+    reply: ChatItem.Reply,
+    showUsage: Boolean,
+    typing: TypingStyle,
+    isSpeaking: Boolean,
+    onRegenerate: () -> Unit,
+    onToggleSpeech: () -> Unit,
+    onSend: (String) -> Unit,
+    onApproval: (ToolCallUi, ApprovalDecision) -> Unit,
+    modifier: Modifier,
+    avatarHandoff: AvatarHandoff?,
+    onFork: (() -> Unit)?,
 ) {
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         val awaitingAvatar = avatarHandoff?.isActive == true
@@ -137,7 +180,7 @@ fun AssistantReply(
         }
         if (reply.isWaiting) ShimmerText(stringResource(R.string.chat_thinking))
         reply.end?.let { end -> ReplyExtras(end, onSend) }
-        ReplyFooter(reply, showUsage, isSpeaking, onRegenerate, onToggleSpeech)
+        ReplyFooter(reply, showUsage, isSpeaking, onRegenerate, onToggleSpeech, onFork)
     }
 }
 
@@ -155,6 +198,7 @@ private fun ReplyFooter(
     isSpeaking: Boolean,
     onRegenerate: () -> Unit,
     onToggleSpeech: () -> Unit,
+    onFork: (() -> Unit)?,
 ) {
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
@@ -171,13 +215,19 @@ private fun ReplyFooter(
         if (end != null && end.isLatest) {
             ActionIcon(MaterialSymbols.Rounded.Refresh, stringResource(R.string.chat_regenerate), onRegenerate)
         }
+        if (end != null && onFork != null) {
+            ActionIcon(MaterialSymbols.Rounded.Call_split, stringResource(R.string.chat_fork), onFork)
+        }
+        val usage = reply.usage?.takeIf { showUsage }
         val meta = listOfNotNull(
             replyDuration(reply)?.let(ReplyMetaFormat::duration)?.asString(),
-            reply.usage?.takeIf { showUsage }?.let(ReplyMetaFormat::usage)?.asString(),
+            usage?.let { ReplyMetaFormat.usage(it) }?.asString(),
+            reply.cost?.takeIf { usage != null }?.let(ReplyMetaFormat::cost),
+            reply.contextShare?.takeIf { usage != null }?.let(ReplyMetaFormat::context)?.asString(),
         )
         if (meta.isNotEmpty()) {
             Text(
-                meta.joinToString(" · "),
+                meta.joinToString(" · ") { it.replace(' ', '\u00A0') },
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = if (end == null) 0.dp else 6.dp),
@@ -222,5 +272,12 @@ private fun ErrorNotice(text: String) {
             Icon(MaterialSymbols.Rounded.Error, contentDescription = null, modifier = Modifier.size(20.dp))
             Text(text, style = MaterialTheme.typography.bodyMedium)
         }
+    }
+}
+
+private class WebLinksOnlyUriHandler(private val base: UriHandler) : UriHandler {
+    override fun openUri(uri: String) {
+        val scheme = uri.substringBefore(':', missingDelimiterValue = "").lowercase()
+        if (scheme == "http" || scheme == "https") runCatching { base.openUri(uri) }
     }
 }

@@ -8,6 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
+import java.nio.file.Files
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 
@@ -61,9 +62,11 @@ class FileLibrary(
     }
 
     suspend fun media(): List<ViewableFile> = withContext(Dispatchers.IO) {
-        mediaCandidates()
-            .sortedByDescending { it.modifiedAt }
-            .distinctBy { contentHash(it.file.file) ?: it.file.file.path }
+        val candidates = mediaCandidates().sortedByDescending { it.modifiedAt }
+        // Only files sharing a size can be duplicates, so the rest never get hashed.
+        val sharedSizes = candidates.groupingBy { it.file.file.length() }.eachCount().filterValues { it > 1 }.keys
+        candidates
+            .distinctBy { candidate -> candidate.file.file.let { if (it.length() in sharedSizes) contentHash(it) ?: it.path else it.path } }
             .map { it.file }
     }
 
@@ -89,7 +92,12 @@ class FileLibrary(
         val name = displayName(uri) ?: uri.lastPathSegment ?: FALLBACK_NAME
         val target = freeName(folder, sanitized(name))
         val input = resolver.openInputStream(uri) ?: throw IOException("Could not open the file")
-        input.use { source -> target.outputStream().use { source.copyTo(it) } }
+        try {
+            input.use { source -> target.outputStream().use { source.copyTo(it) } }
+        } catch (e: Exception) {
+            target.delete()
+            throw e
+        }
         target
     }
 
@@ -122,8 +130,9 @@ class FileLibrary(
 
     private suspend fun mediaCandidates(): List<MediaCandidate> {
         val folders = listOf(uploads, workspace).flatMap { root ->
-            root.walkTopDown().maxDepth(MAX_MEDIA_DEPTH).onEnter { !it.name.startsWith(HIDDEN_PREFIX) || it == root }
-                .filter { it.isFile && mimeTypeOf(it.name).startsWith(IMAGE_PREFIX) }
+            root.walkTopDown().maxDepth(MAX_MEDIA_DEPTH)
+                .onEnter { it == root || (!it.name.startsWith(HIDDEN_PREFIX) && !Files.isSymbolicLink(it.toPath())) }
+                .filter { it.isFile && !Files.isSymbolicLink(it.toPath()) && mimeTypeOf(it.name).startsWith(IMAGE_PREFIX) }
                 .map { MediaCandidate(ViewableFile(it, it.name, mimeTypeOf(it.name)), it.lastModified()) }
                 .toList()
         }
@@ -160,13 +169,17 @@ class FileLibrary(
         val key = "${file.path}|${file.length()}|${file.lastModified()}"
         hashes[key]?.let { return it }
         val digest = MessageDigest.getInstance(HASH_ALGORITHM)
-        file.inputStream().use { input ->
-            val buffer = ByteArray(HASH_BUFFER_BYTES)
-            while (true) {
-                val read = input.read(buffer)
-                if (read < 0) break
-                digest.update(buffer, 0, read)
+        try {
+            file.inputStream().use { input ->
+                val buffer = ByteArray(HASH_BUFFER_BYTES)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    digest.update(buffer, 0, read)
+                }
             }
+        } catch (e: IOException) {
+            return null
         }
         return digest.digest().joinToString("") { "%02x".format(it) }.also { hashes[key] = it }
     }

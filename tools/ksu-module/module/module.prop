@@ -1,0 +1,6 @@
+id=md3agent_system
+name=MD3 Agent (system app)
+version=v0.9.0
+versionCode=90
+author=huecoder
+description=Mounts MD3 Agent into /system/priv-app so it runs as a privileged system app. Enable accessibility yourself; this module does not keep it on.

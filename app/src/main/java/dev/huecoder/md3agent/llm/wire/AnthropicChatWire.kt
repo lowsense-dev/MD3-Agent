@@ -22,7 +22,8 @@ import okhttp3.RequestBody.Companion.toRequestBody
 
 object AnthropicChatWire : ChatWire {
     private const val MESSAGES_PATH = "messages"
-    private const val OUTPUT_TOKENS = 8_000
+    private const val ANSWER_TOKENS = 32_000
+    private val OPUS_4_0_AND_4_1 = Regex("""claude-opus-4(-[01])?(-\d{8})?""")
     private const val ROLE_USER = "user"
     private const val ROLE_ASSISTANT = "assistant"
     private const val THINKING = "thinking"
@@ -43,7 +44,7 @@ object AnthropicChatWire : ChatWire {
         val budget = chat.options.reasoningEffort?.let(::thinkingBudget)?.takeUnless { midToolLoop(chat.turns) && !continuesThinking(chat.turns, replay) }
         put("model", chat.model)
         put("stream", true)
-        put("max_tokens", OUTPUT_TOKENS + (budget ?: 0))
+        put("max_tokens", maxTokens(chat.model, budget))
         budget?.let { putJsonObject("thinking") { put("type", "enabled"); put("budget_tokens", it) } }
         val system = chat.turns.filter { it.role == ChatTurn.Role.SYSTEM }.joinToString("\n\n") { it.content }
         if (system.isNotBlank()) {
@@ -131,11 +132,28 @@ object AnthropicChatWire : ChatWire {
         }
     }
 
-    private fun midToolLoop(turns: List<ChatTurn>): Boolean =
-        turns.lastOrNull { it.role == ChatTurn.Role.ASSISTANT }?.toolCalls?.isNotEmpty() == true
+    private fun midToolLoop(turns: List<ChatTurn>): Boolean {
+        val last = turns.indexOfLast { it.role == ChatTurn.Role.ASSISTANT }
+        return last >= 0 && turns[last].toolCalls.isNotEmpty() && turns.drop(last + 1).all { it.isToolOutput }
+    }
 
     private fun continuesThinking(turns: List<ChatTurn>, replay: Boolean): Boolean =
         replay && turns.lastOrNull { it.role == ChatTurn.Role.ASSISTANT }?.reasoning?.leading()?.isNotEmpty() == true
+
+    /** Room for a long answer on top of the thinking budget, but never above what the model accepts (the API rejects more). */
+    internal fun maxTokens(model: String, budget: Int?): Int = minOf(outputCap(model), ANSWER_TOKENS + (budget ?: 0))
+
+    // shortcut: caps are keyed by Anthropic model ids; proxies with other ids get the newest models' 64k cap.
+    private fun outputCap(model: String): Int {
+        val id = model.lowercase().substringAfterLast('/')
+        return when {
+            id.startsWith("claude-3-5") -> 8_192
+            id.startsWith("claude-3-7") -> 64_000
+            id.startsWith("claude-3") -> 4_096
+            OPUS_4_0_AND_4_1.matches(id) -> 32_000
+            else -> 64_000
+        }
+    }
 
     private fun thinkingBudget(effort: ReasoningEffort): Int? = when (effort) {
         ReasoningEffort.NONE -> null

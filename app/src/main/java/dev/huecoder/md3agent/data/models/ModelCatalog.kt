@@ -42,6 +42,9 @@ class ModelCatalog(
         return info(providerId, modelId)
     }
 
+    fun known(providerId: String?, modelId: String): ModelInfo? =
+        providerId?.let { catalogs.value[it]?.find(modelId) } ?: catalogs.value.values.firstNotNullOfOrNull { it.find(modelId) }
+
     suspend fun refresh(provider: ProviderProfile): List<ModelInfo> {
         val models = client.listModelInfo(provider)
         val catalog = ProviderCatalog(models, clock())
@@ -69,7 +72,7 @@ class ModelCatalog(
         withContext(Dispatchers.IO) { fileFor(providerId).delete() }
     }
 
-    private suspend fun loadIfMissing(providerId: String) {
+    suspend fun loadIfMissing(providerId: String) {
         if (providerId in catalogs.value) return
         val cached = withContext(Dispatchers.IO) {
             val file = fileFor(providerId)

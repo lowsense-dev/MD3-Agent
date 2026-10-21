@@ -38,15 +38,19 @@ import dev.huecoder.md3agent.prompt.SystemPromptRenderer
 import dev.huecoder.md3agent.tools.ToolContext
 import dev.huecoder.md3agent.tools.ToolOutcome
 import dev.huecoder.md3agent.tools.ToolRegistry
+import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.filterIsInstance
+import kotlinx.coroutines.flow.fold
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.combine
@@ -79,6 +83,14 @@ class ConversationRunner(
 
     val drafts: StateFlow<Map<String, StreamingDraft>> = _drafts.asStateFlow()
 
+    private val _compacting = MutableStateFlow<Set<String>>(emptySet())
+
+    // The prompt id each chat last searched long-term memory for: one search per message, not per tool round.
+    private val recalled = ConcurrentHashMap<String, String>()
+
+    /** Chats whose history is being summarized right now. */
+    val compacting: StateFlow<Set<String>> = _compacting.asStateFlow()
+
     val activity: Flow<Map<String, ChatActivity>> = combine(_drafts, prompts.pending) { drafts, asked ->
         drafts.mapValues { (chatId, draft) ->
             if (draft.awaitingCallId != null || chatId in asked) ChatActivity.NEEDS_INPUT else ChatActivity.WORKING
@@ -103,11 +115,18 @@ class ConversationRunner(
     }
 
     suspend fun regenerate(assistantMessage: MessageEntity) {
-        cancel(assistantMessage.chatId)
+        // Join so the cancelled reply's final save cannot write the truncated row back.
+        jobs.remove(assistantMessage.chatId)?.cancelAndJoin()
         val history = chats.history(assistantMessage.chatId)
         val prompt = history.lastOrNull { it.role == MessageRole.USER && it.createdAt < assistantMessage.createdAt } ?: return
         chats.truncateAfter(prompt)
         launchReply(assistantMessage.chatId)
+    }
+
+    suspend fun resend(chatId: String, messageId: String, text: String, attached: List<Attachment>) {
+        jobs.remove(chatId)?.cancelAndJoin()
+        chats.history(chatId).firstOrNull { it.id == messageId && it.role == MessageRole.USER }?.let { chats.truncateFrom(it, keep = attached) }
+        send(chatId, text, attached)
     }
 
     fun cancel(chatId: String) {
@@ -118,25 +137,51 @@ class ConversationRunner(
         jobs.keys.toList().forEach(::cancel)
     }
 
-    private fun launchReply(chatId: String) {
+    /** Summarizes the chat so far (like Codex's /compact); the model then continues from the summary. */
+    fun compact(chatId: String) = launchJob(chatId) {
+        try {
+            val model = resolveModel(chatId, settings.current()) ?: return@launchJob chats.save(errorMessage(chatId, NO_MODEL_SELECTED))
+            summarize(chatId, model, chats.history(chatId), pending = null)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "Compaction failed", e)
+            chats.save(errorMessage(chatId, COMPACTION_FAILED + (e.message ?: e.javaClass.simpleName)))
+        }
+    }
+
+    private fun launchReply(chatId: String) = launchJob(chatId) { generateReply(chatId) }
+
+    private fun launchJob(chatId: String, work: suspend () -> Unit) {
         cancel(chatId)
-        val job = scope.launch(start = CoroutineStart.LAZY) { generateReply(chatId) }
+        val job = scope.launch(start = CoroutineStart.LAZY) { work() }
         jobs[chatId] = job
         job.invokeOnCompletion { jobs.remove(chatId, job) }
         job.start()
     }
 
     private suspend fun generateReply(chatId: String) {
-        val current = settings.current()
-        val model = resolveModel(chatId, current) ?: return chats.save(errorMessage(chatId, NO_MODEL_SELECTED))
-        val agent = current.agents.forChat(chats.chat(chatId)?.agentId)
-        val toolSettings = agent.tools(current.tools)
         try {
+            val current = settings.current()
+            val model = resolveModel(chatId, current) ?: return chats.save(errorMessage(chatId, NO_MODEL_SELECTED))
+            val agent = current.agents.forChat(chats.chat(chatId)?.agentId)
+            val toolSettings = agent.tools(current.tools)
+            if (current.chat.autoCompact) autoCompact(chatId, model, current.chat.compactAt)
             while (true) {
                 val round = streamRound(chatId, model, agent, toolSettings) ?: return
                 if (round.toolCalls.isEmpty()) return labelLater(chatId, model, current)
                 val endsTurn = runTools(chatId, round, toolSettings)
-                if (endsTurn) return
+                if (endsTurn) return labelLater(chatId, model, current)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Anything outside a streamed round (catalog lookup, history, DB, tools) ends the turn as an error row, never a crash.
+            Log.e(TAG, "Reply failed", e)
+            try {
+                chats.save(errorMessage(chatId, e.message ?: e.javaClass.simpleName))
+            } catch (saveFailure: Exception) {
+                Log.e(TAG, "Could not record the failure", saveFailure)
             }
         } finally {
             val self = currentCoroutineContext()[Job]
@@ -144,8 +189,55 @@ class ConversationRunner(
         }
     }
 
+    /** Compacts before answering when the last turn filled most of the window; on failure the reply goes on with full history. */
+    private suspend fun autoCompact(chatId: String, model: ResolvedModel, threshold: Float) {
+        val history = chats.history(chatId)
+        val window = catalog.infoLoaded(model.provider.id, model.modelId).contextWindow
+        if (!Compaction.needsCompaction(Compaction.usage(history, window), threshold)) return
+        try {
+            summarize(chatId, model, history, pending = history.lastOrNull()?.takeIf { it.role == MessageRole.USER })
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "Auto compaction failed, answering with the full history", e)
+        }
+    }
+
+    private suspend fun summarize(chatId: String, model: ResolvedModel, history: List<MessageEntity>, pending: MessageEntity?): Boolean {
+        val active = Compaction.activeHistory(history).filter { it.id != pending?.id }
+        if (!Compaction.worthCompacting(active)) return false
+        val info = catalog.infoLoaded(model.provider.id, model.modelId)
+        val traits = info.traits
+        val turns = listOf(
+            ChatTurn(ChatTurn.Role.SYSTEM, Compaction.INSTRUCTIONS),
+            ChatTurn(ChatTurn.Role.USER, Compaction.transcript(Compaction.latestSummary(history), active, info.contextWindow)),
+        )
+        val options = CompletionOptions(reasoningEffort = traits.reasoningEfforts.minOrNull().takeIf { traits.reasoning }, reasoningControl = traits.reasoningControl)
+        _compacting.update { it + chatId }
+        try {
+            val summary = completions.stream(model.provider, model.modelId, turns, options = options)
+                .filterIsInstance<CompletionEvent.ContentDelta>()
+                .fold(StringBuilder()) { text, delta -> text.append(delta.text) }
+                .toString()
+                .trim()
+            if (summary.isEmpty()) throw IllegalStateException(EMPTY_SUMMARY)
+            chats.appendCompaction(chatId, summary, model.modelId, pending)
+            return true
+        } finally {
+            _compacting.update { it - chatId }
+        }
+    }
+
     private fun labelLater(chatId: String, model: ResolvedModel, current: AppSettings) {
-        if (current.chat.autoTitle) scope.launch { titler.labelIfNeeded(chatId, model) }
+        if (current.chat.autoTitle) scope.launch {
+            try {
+                titler.labelIfNeeded(chatId, model)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Labeling failed", e)
+            }
+        }
     }
 
     private suspend fun streamRound(chatId: String, model: ResolvedModel, agent: AgentProfile, toolSettings: ToolSettings): StreamingDraft? {
@@ -159,32 +251,50 @@ class ConversationRunner(
             explicitCaching = info.family == ModelFamily.CLAUDE,
         )
         val toolSpecs = if (traits.output == ModelOutput.IMAGE || info.toolUse == false) emptyList() else tools.specs(toolSettings)
-        val turns = buildTurns(agent, toolSettings, chats.history(chatId))
+        val turns = buildTurns(chatId, agent, toolSettings, chats.history(chatId))
         val prompt = promptFingerprint(turns, toolSpecs)
         val message = chats.startAssistantMessage(chatId, model.modelId)
         val accumulator = ToolCallAccumulator()
+        var finishReason: String? = null
         var draft = StreamingDraft(message.id, content = "", reasoning = "", toolCalls = emptyList(), runningCallIds = emptySet(), awaitingCallId = null, usage = null)
+        val content = StringBuilder()
+        val reasoning = StringBuilder()
+        fun latest() = draft.copy(content = content.toString(), reasoning = reasoning.toString(), toolCalls = accumulator.calls())
         publish(chatId, draft)
+        var publishedAt = System.nanoTime()
         try {
             streamWithReplayFallback(model, turns, toolSpecs, options).collect { event ->
-                draft = when (event) {
-                    is CompletionEvent.ContentDelta -> draft.copy(content = draft.content + event.text)
-                    is CompletionEvent.ReasoningDelta -> draft.copy(reasoning = draft.reasoning + event.text)
-                    is CompletionEvent.ReasoningBlockDone -> draft.copy(reasoningBlocks = draft.reasoningBlocks + event.block)
-                    is CompletionEvent.ImageOutput -> draft.copy(images = draft.images + event.url)
-                    is CompletionEvent.ToolCallDelta -> draft.copy(toolCalls = accumulator.apply { add(event) }.calls())
-                    is CompletionEvent.Finished -> draft
-                    is CompletionEvent.Usage -> draft.copy(usage = event.usage)
+                var urgent = false
+                when (event) {
+                    is CompletionEvent.ContentDelta -> content.append(event.text)
+                    is CompletionEvent.ReasoningDelta -> reasoning.append(event.text)
+                    is CompletionEvent.ReasoningBlockDone -> draft = draft.copy(reasoningBlocks = draft.reasoningBlocks + event.block)
+                    is CompletionEvent.ImageOutput -> draft = draft.copy(images = draft.images + event.url).also { urgent = true }
+                    is CompletionEvent.ToolCallDelta -> {
+                        accumulator.add(event)
+                        urgent = !event.id.isNullOrEmpty() || !event.name.isNullOrEmpty()
+                    }
+                    is CompletionEvent.Finished -> finishReason = event.reason
+                    is CompletionEvent.Usage -> draft = draft.copy(usage = event.usage)
                 }
-                publish(chatId, draft)
+                val now = System.nanoTime()
+                if (urgent || now - publishedAt >= PUBLISH_INTERVAL_NS) {
+                    publishedAt = now
+                    publish(chatId, latest())
+                }
             }
-            persist(message, draft, MessageStatus.COMPLETE, errorText = null, trace = reasoningTrace(model, prompt, draft))
+            draft = latest()
+            publish(chatId, draft)
+            // A reply cut at the output limit is kept as complete, with a note so it does not pass for a full answer.
+            val cutOff = TRUNCATED_REASON.takeIf { finishReason?.lowercase() in OUTPUT_LIMIT_REASONS }
+            persist(message, draft, MessageStatus.COMPLETE, errorText = cutOff, trace = reasoningTrace(model, prompt, draft))
             return draft
         } catch (e: CancellationException) {
+            draft = latest()
             withContext(NonCancellable) { persist(message, draft, MessageStatus.CANCELLED, errorText = null, trace = reasoningTrace(model, prompt, draft)) }
             throw e
         } catch (e: Exception) {
-            persist(message, draft, MessageStatus.ERROR, errorText = e.message ?: e.javaClass.simpleName, trace = null)
+            persist(message, latest(), MessageStatus.ERROR, errorText = e.message ?: e.javaClass.simpleName, trace = null)
             return null
         }
     }
@@ -208,12 +318,36 @@ class ConversationRunner(
         return approvals.request(chatId, call)
     }
 
-    private suspend fun buildTurns(agent: AgentProfile, toolSettings: ToolSettings, history: List<MessageEntity>): List<ChatTurn> {
+    private suspend fun buildTurns(chatId: String, agent: AgentProfile, toolSettings: ToolSettings, fullHistory: List<MessageEntity>): List<ChatTurn> {
+        val history = withRecall(chatId, fullHistory)
         val contents = mutableMapOf<String, AttachmentContent>()
-        history.flatMap { Attachment.decode(it.attachmentsJson) }.forEach { attachment ->
+        Compaction.activeHistory(history).flatMap { Attachment.decode(it.attachmentsJson) }.forEach { attachment ->
             attachments.contentFor(attachment)?.let { contents[attachment.id] = it }
         }
         return TurnAssembler.assemble(systemPrompt.render(agent, tools.promptNotes(toolSettings), memories.instant()), history, contents)
+    }
+
+    /**
+     * Hands the model long-term memories relevant to the latest prompt up front. They are written once into that message's
+     * context block, not the system prompt, so every later request keeps the same prefix and stays in the provider's cache.
+     */
+    private suspend fun withRecall(chatId: String, history: List<MessageEntity>): List<MessageEntity> {
+        val index = history.indexOfLast { it.role == MessageRole.USER }
+        val prompt = history.getOrNull(index)?.takeIf { it.content.isNotBlank() } ?: return history
+        if (recalled.put(chatId, prompt.id) == prompt.id || prompt.contextNote?.contains(RECALL_HEADER) == true) return history
+        val found = try {
+            memories.search(prompt.content, RECALL_LIMIT).matches.filter { it.score >= RECALL_MIN_SCORE }.map { it.item }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "Memory recall failed", e)
+            emptyList()
+        }
+        if (found.isEmpty()) return history
+        val recall = found.joinToString("\n", prefix = "$RECALL_HEADER\n") { "- [${it.id}] ${it.title}: ${it.content}" }
+        val noted = prompt.copy(contextNote = listOfNotNull(prompt.contextNote, recall).joinToString("\n"))
+        chats.save(noted)
+        return history.toMutableList().also { it[index] = noted }
     }
 
     private suspend fun resolveModel(chatId: String, current: AppSettings): ResolvedModel? {
@@ -267,7 +401,17 @@ class ConversationRunner(
 
     private companion object {
         const val TITLE_MAX_CHARS = 48
+        const val PUBLISH_INTERVAL_NS = 50_000_000L
         const val NO_MODEL_SELECTED = "No model selected. Add a provider in settings."
+        const val TRUNCATED_REASON = "Reply was cut off: the model hit its output token limit."
+        const val TAG = "ConversationRunner"
+        const val RECALL_LIMIT = 5
+        const val RECALL_HEADER = "Long-term memories that may be relevant (ids in brackets):"
+        // A single shared common word scores ~0.1; this keeps only memories that actually match the prompt.
+        const val RECALL_MIN_SCORE = 0.2f
+        const val COMPACTION_FAILED = "Could not compact the chat: "
+        const val EMPTY_SUMMARY = "the model returned an empty summary"
+        val OUTPUT_LIMIT_REASONS = setOf("length", "max_tokens", "max_output_tokens")
         val WHITESPACE = Regex("""\s+""")
     }
 }

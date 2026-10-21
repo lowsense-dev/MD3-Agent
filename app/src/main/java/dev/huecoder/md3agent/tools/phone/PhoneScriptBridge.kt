@@ -38,7 +38,7 @@ class PhoneScriptBridge(
     private val replies = ConcurrentHashMap<Int, String>()
     private val handles = AtomicInteger()
 
-    fun begin(operation: String, payload: String): Int {
+    override fun begin(operation: String, payload: String): Int {
         val handle = handles.incrementAndGet()
         scope.launch {
             replies[handle] = try {
@@ -50,7 +50,7 @@ class PhoneScriptBridge(
         return handle
     }
 
-    fun poll(handle: Int): String? = replies.remove(handle) ?: CANCELLED_REPLY.takeUnless { scope.isActive }
+    override fun poll(handle: Int): String? = replies.remove(handle) ?: CANCELLED_REPLY.takeUnless { scope.isActive }
 
     override fun abort() = scope.cancel()
 

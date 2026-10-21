@@ -1,9 +1,11 @@
 package dev.huecoder.md3agent.system.control
 
 import android.accessibilityservice.AccessibilityService
+import android.app.KeyguardManager
 import android.content.Context
 import android.graphics.Point
 import android.os.Build
+import android.os.PowerManager
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
@@ -24,9 +26,12 @@ internal class ScreenReader(private val context: Context) {
 
     fun isOwnAppInFront(service: AccessibilityService): Boolean = frontRoot(service)?.packageName == context.packageName
 
-    fun snapshot(service: AccessibilityService): ScreenSnapshot {
+    fun isLocked(service: AccessibilityService): Boolean =
+        service.getSystemService(KeyguardManager::class.java).isKeyguardLocked || !service.getSystemService(PowerManager::class.java).isInteractive
+
+    fun snapshot(service: AccessibilityService, remember: Boolean = true): ScreenSnapshot {
         val size = screenSize(service)
-        return ScreenTree.capture(frontRoot(service), size.x, size.y, cutouts(service)).also { last = it }
+        return ScreenTree.capture(frontRoot(service), size.x, size.y, cutouts(service)).also { if (remember) last = it }
     }
 
     fun probe(service: AccessibilityService): ScreenProbe {

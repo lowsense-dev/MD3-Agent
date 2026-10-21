@@ -5,8 +5,12 @@ import android.util.Log
 import dev.huecoder.md3agent.data.attachments.Attachment
 import dev.huecoder.md3agent.data.attachments.AttachmentStore
 import dev.huecoder.md3agent.net.HttpClientProvider
+import dev.huecoder.md3agent.net.executeCancellable
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 import java.io.IOException
 
@@ -21,6 +25,9 @@ class GeneratedImages(private val attachments: AttachmentStore, private val http
         } catch (e: IllegalArgumentException) {
             Log.w(TAG, "Generated image is not valid base64", e)
             null
+        } catch (e: TimeoutCancellationException) {
+            Log.w(TAG, "Generated image took too long to download", e)
+            null
         }
     }
 
@@ -30,10 +37,16 @@ class GeneratedImages(private val attachments: AttachmentStore, private val http
             val mime = header.removePrefix(DATA_PREFIX).substringBefore(';')
             Base64.decode(url.substringAfter(','), Base64.DEFAULT) to extensionOf(mime)
         } else {
-            httpClients.current().newCall(Request.Builder().url(url).build()).execute().use { response ->
-                if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
-                val mime = response.header("Content-Type").orEmpty().substringBefore(';')
-                response.body.bytes() to extensionOf(mime)
+            val link = url.toHttpUrlOrNull() ?: throw IOException("Not an http(s) image link")
+            // Bounded, and cancellable: this also runs while a cancelled reply is being saved.
+            withTimeout(DOWNLOAD_TIMEOUT_MS) {
+                httpClients.current().newCall(Request.Builder().url(link).build()).executeCancellable { response ->
+                    if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
+                    val mime = response.header("Content-Type").orEmpty().substringBefore(';')
+                    val source = response.body.source()
+                    if (source.request(MAX_IMAGE_BYTES + 1)) throw IOException("Generated image is larger than ${MAX_IMAGE_BYTES / BYTES_PER_MB} MB")
+                    source.buffer.readByteArray() to extensionOf(mime)
+                }
             }
         }
     }
@@ -48,5 +61,8 @@ class GeneratedImages(private val attachments: AttachmentStore, private val http
     private companion object {
         const val TAG = "GeneratedImages"
         const val DATA_PREFIX = "data:"
+        const val DOWNLOAD_TIMEOUT_MS = 20_000L
+        const val MAX_IMAGE_BYTES = 25L * 1024 * 1024
+        const val BYTES_PER_MB = 1024 * 1024
     }
 }

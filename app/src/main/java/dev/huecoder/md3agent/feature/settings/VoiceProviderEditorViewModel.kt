@@ -17,7 +17,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 data class VoiceProviderForm(
     val id: String,
@@ -49,10 +48,10 @@ data class VoiceProviderForm(
     private fun String.adopt(oldDefault: String, newDefault: String) = if (isBlank() || this == oldDefault) newDefault else this
 
     val baseUrlError: UiText?
-        get() = if (baseUrl.isBlank() || baseUrl.trim().toHttpUrlOrNull() != null) null else UiText.Resource(R.string.provider_base_url_invalid)
+        get() = endpointUrlError(baseUrl, carriesSecrets = apiKey.isNotBlank() || headers.any { it.name.isNotBlank() }, R.string.provider_base_url_invalid)
 
     val canSave: Boolean
-        get() = name.isNotBlank() && baseUrl.isNotBlank() && baseUrlError == null && transcriptionModel.isNotBlank()
+        get() = name.isNotBlank() && baseUrl.isNotBlank() && baseUrlError == null && transcriptionModel.isNotBlank() && HeaderRules.allValid(headers)
 
     fun copyEndpoint(source: ProviderProfile) = (if (source.format.hasVoice) withFormat(source.format) else this).copy(
         name = name.ifBlank { source.name },
@@ -154,11 +153,12 @@ class VoiceProviderEditorViewModel(
         val current = draft.current?.takeIf { it.canSave } ?: return
         val provider = current.toProvider()
         viewModelScope.launch {
-            settings.updateVoice { voice ->
+            val saved = settings.updateVoice { voice ->
                 val exists = voice.providers.any { it.id == provider.id }
                 val providers = if (exists) voice.providers.map { if (it.id == provider.id) provider else it } else voice.providers + provider
                 voice.copy(providers = providers)
             }
+            if (!saved) return@launch
             draft.markSaved()
             onSaved()
         }
@@ -167,13 +167,14 @@ class VoiceProviderEditorViewModel(
     fun delete(onDeleted: () -> Unit) {
         val id = providerId ?: return onDeleted()
         viewModelScope.launch {
-            settings.updateVoice { voice ->
+            val deleted = settings.updateVoice { voice ->
                 voice.copy(
                     providers = voice.providers.filterNot { it.id == id },
                     activeProviderId = voice.activeProviderId.takeUnless { it == id },
                     speechProviderId = voice.speechProviderId.takeUnless { it == id },
                 )
             }
+            if (!deleted) return@launch
             onDeleted()
         }
     }

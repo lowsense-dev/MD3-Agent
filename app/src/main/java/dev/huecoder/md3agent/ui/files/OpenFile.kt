@@ -9,7 +9,12 @@ import dev.huecoder.md3agent.R
 import dev.huecoder.md3agent.data.files.ViewableFile
 
 fun Context.openFile(target: ViewableFile) {
-    val uri = FileProvider.getUriForFile(this, "$packageName$FILE_PROVIDER_SUFFIX", target.file, target.name)
+    val uri = try {
+        FileProvider.getUriForFile(this, "$packageName$FILE_PROVIDER_SUFFIX", target.file, target.name)
+    } catch (e: IllegalArgumentException) {
+        Toast.makeText(this, getString(R.string.files_error_open, target.name), Toast.LENGTH_SHORT).show()
+        return
+    }
     val intent = Intent(Intent.ACTION_VIEW)
         .setDataAndType(uri, target.mimeType)
         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)

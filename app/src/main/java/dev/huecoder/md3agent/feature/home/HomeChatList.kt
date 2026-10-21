@@ -139,6 +139,8 @@ private fun ChatRow(
     val interactions = remember { MutableInteractionSource() }
     val pressed by interactions.collectIsPressedAsState()
     val scale by animateFloatAsState(if (pressed) PRESSED_SCALE else 1f, PRESS_SPEC, label = "rowPress")
+    // Stripping markdown takes several regex passes; redo it only when the last message changes.
+    val preview = remember(chat.lastMessage) { chat.lastMessage?.let(ChatPreview::of)?.takeIf { it.isNotEmpty() } }
     SegmentedListItem(
         onClick = onClick,
         onLongClick = onLongClick,
@@ -154,10 +156,10 @@ private fun ChatRow(
                 else -> ChatBadge(ChatLook.of(chat.iconKey, chat.colorKey, chat.shapeKey))
             }
         },
-        supportingContent = chat.lastMessage?.let(ChatPreview::of)?.takeIf { it.isNotEmpty() }?.let { preview ->
+        supportingContent = preview?.let { text ->
             {
                 Text(
-                    preview,
+                    text,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,

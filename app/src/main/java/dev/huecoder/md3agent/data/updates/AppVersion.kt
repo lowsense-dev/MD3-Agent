@@ -22,7 +22,7 @@ class AppVersion private constructor(private val parts: List<Int>, val label: St
         fun parse(raw: String): AppVersion? {
             val match = NUMERIC.find(raw.trim()) ?: return null
             val numbers = match.groupValues[1]
-            return AppVersion(numbers.split('.').map(String::toInt), numbers)
+            return AppVersion(numbers.split('.').map { it.toIntOrNull() ?: return null }, numbers)
         }
     }
 }

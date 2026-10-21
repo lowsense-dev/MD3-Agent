@@ -43,6 +43,23 @@ class ToolsParsingTest {
     }
 
     @Test
+    fun `page wrapped in a form keeps its text`() {
+        val html = "<html><body><form id=\"aspnetForm\"><h1>Title</h1><p>Body</p></form></body></html>"
+
+        assertEquals("Title\nBody", HtmlText.document(html))
+    }
+
+    @Test
+    fun `duckduckgo hit with a malformed redirect is skipped`() {
+        val html = """
+            <div class="result__body"><a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fbad%ZZ">Bad</a></div>
+            <div class="result__body"><a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fgood.org">Good</a></div>
+        """.trimIndent()
+
+        assertEquals(listOf(SearchHit("Good", "https://good.org")), DuckDuckGoHtml.parse(html))
+    }
+
+    @Test
     fun `reply ui keeps valid entries and drops broken ones`() {
         val ui = ReplyUi.parse(
             """{"suggestions":["Да","Да"," ","Нет"],"buttons":[
@@ -71,5 +88,17 @@ class ToolsParsingTest {
         assertFalse(ok.isError)
         assertEquals("""{"a":1}""", ok.content)
         assertEquals(emptyList<ToolSpec>(), registry.specs(ToolSettings().withPermission("echo", ToolPermission.OFF)))
+    }
+
+    @Test
+    fun `registry calls only network failures network errors`() = runTest {
+        fun failing(name: String, error: Exception) = object : Tool {
+            override val spec = ToolSpec(name, "", objectSchema(emptyList()) {})
+            override suspend fun execute(arguments: JsonObject, settings: ToolSettings): ToolOutcome = throw error
+        }
+        val registry = ToolRegistry(listOf(failing("disk", java.io.FileNotFoundException("a.txt")), failing("net", java.net.UnknownHostException("x.org"))))
+
+        assertEquals("I/O error: a.txt", registry.run(ToolCall("1", "disk", "{}"), ToolSettings(), ToolContext("chat")).content)
+        assertEquals("Network error: x.org", registry.run(ToolCall("2", "net", "{}"), ToolSettings(), ToolContext("chat")).content)
     }
 }

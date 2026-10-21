@@ -90,7 +90,7 @@ class MemoryViewModel(
     fun save(onSaved: () -> Unit) {
         val current = draft.current?.trimmed() ?: return
         viewModelScope.launch {
-            settings.updateTools { it.copy(memory = current) }
+            if (!settings.updateTools { it.copy(memory = current) }) return@launch
             draft.markSaved()
             onSaved()
         }

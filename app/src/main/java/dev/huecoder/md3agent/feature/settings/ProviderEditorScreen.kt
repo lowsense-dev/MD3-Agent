@@ -12,6 +12,13 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.input.OffsetMapping
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
@@ -20,6 +27,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.composables.icons.materialsymbols.MaterialSymbols
 import com.composables.icons.materialsymbols.rounded.Delete
+import com.composables.icons.materialsymbols.rounded.Visibility
+import com.composables.icons.materialsymbols.rounded.Visibility_off
 import dev.huecoder.md3agent.R
 import dev.huecoder.md3agent.data.settings.ApiFormat
 import dev.huecoder.md3agent.ui.components.SectionHeader
@@ -56,6 +65,9 @@ fun ProviderEditorScreen(providerId: String?, onDone: () -> Unit) {
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            if (current.isNew) {
+                ProviderPresetRow(current.preset) { preset -> viewModel.edit { it.withPreset(preset) } }
+            }
             ChoiceRow(
                 title = stringResource(R.string.provider_format),
                 choices = apiFormatChoices(ApiFormat.CHAT),
@@ -79,10 +91,9 @@ fun ProviderEditorScreen(providerId: String?, onDone: () -> Unit) {
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                 modifier = Modifier.fillMaxWidth(),
             )
-            SecretField(
+            ApiKeysField(
                 value = current.apiKey,
                 onValueChange = { value -> viewModel.edit { it.copy(apiKey = value) } },
-                label = stringResource(R.string.provider_api_key),
             )
 
             SectionHeader(stringResource(R.string.provider_section_headers))
@@ -92,4 +103,33 @@ fun ProviderEditorScreen(providerId: String?, onDone: () -> Unit) {
             )
         }
     }
+}
+
+@Composable
+internal fun ApiKeysField(value: String, onValueChange: (String) -> Unit) {
+    var revealed by rememberSaveable { mutableStateOf(false) }
+    FormField(
+        value = value,
+        onValueChange = onValueChange,
+        label = stringResource(R.string.provider_api_key),
+        supportingText = stringResource(R.string.provider_api_keys_hint),
+        singleLine = false,
+        visualTransformation = if (revealed) VisualTransformation.None else KeyLinesMask,
+        trailingIcon = {
+            IconButton(onClick = { revealed = !revealed }) {
+                Icon(
+                    if (revealed) MaterialSymbols.Rounded.Visibility_off else MaterialSymbols.Rounded.Visibility,
+                    contentDescription = stringResource(if (revealed) R.string.provider_secret_hide else R.string.provider_secret_show),
+                )
+            }
+        },
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
+
+private object KeyLinesMask : VisualTransformation {
+    override fun filter(text: AnnotatedString) =
+        TransformedText(AnnotatedString(text.text.replace(NOT_NEWLINE, "\u2022")), OffsetMapping.Identity)
+
+    private val NOT_NEWLINE = Regex("[^\n]")
 }

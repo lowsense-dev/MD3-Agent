@@ -53,7 +53,7 @@ enum class RowAction(val icon: ImageVector, @StringRes val label: Int, val tone:
 
     enum class Tone { DANGER, CALM, NEUTRAL }
 
-    val keepsRow: Boolean get() = this == MOVE
+    val keepsRow: Boolean get() = this == MOVE || this == DELETE_FOREVER
 
     companion object {
         fun resolve(setting: SwipeAction, filter: ChatFilter, isRight: Boolean): RowAction? = when {

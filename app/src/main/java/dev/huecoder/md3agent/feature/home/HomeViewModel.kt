@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -69,7 +70,7 @@ private data class Filters(val filter: ChatFilter, val selection: Set<String>)
 class HomeViewModel(
     private val chats: ChatRepository,
     private val settings: SettingsRepository,
-    runner: ConversationRunner,
+    private val runner: ConversationRunner,
     private val zone: () -> ZoneId = ZoneId::systemDefault,
 ) : ViewModel() {
     private val filter = MutableStateFlow<ChatFilter>(ChatFilter.All)
@@ -150,7 +151,10 @@ class HomeViewModel(
         rangeBase = null
     }
 
-    fun trash(chatIds: Set<String>) = update(chatIds) { chats.trash(it) }
+    fun trash(chatIds: Set<String>) = update(chatIds) {
+        it.forEach(runner::cancel)
+        chats.trash(it)
+    }
 
     fun restore(chatIds: Set<String>) = update(chatIds) { chats.restore(it) }
 
@@ -161,10 +165,16 @@ class HomeViewModel(
 
     fun unarchive(chatIds: Set<String>) = update(chatIds) { chats.unarchive(it) }
 
-    fun deleteForever(chatIds: Set<String>) = update(chatIds) { chats.deleteForever(it) }
+    fun deleteForever(chatIds: Set<String>) = update(chatIds) {
+        it.forEach(runner::cancel)
+        chats.deleteForever(it)
+    }
 
     fun emptyTrash() {
-        viewModelScope.launch { chats.emptyTrash() }
+        viewModelScope.launch {
+            summaries.first().filter { it.trashedAt != null }.forEach { runner.cancel(it.id) }
+            chats.emptyTrash()
+        }
     }
 
     fun undo(notice: HomeNotice) = when (notice) {

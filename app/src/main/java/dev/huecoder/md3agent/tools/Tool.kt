@@ -64,7 +64,13 @@ fun JsonObject.requireString(name: String): String =
 fun JsonObject.optionalString(name: String): String? =
     (this[name] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
 
-fun JsonObject.optionalInt(name: String): Int? = (this[name] as? JsonPrimitive)?.intOrNull
+// Models sometimes send 16000.0 or "16000" for integers; read those too instead of silently falling back to the default.
+fun JsonObject.optionalInt(name: String): Int? {
+    val value = this[name] as? JsonPrimitive ?: return null
+    value.intOrNull?.let { return it }
+    val number = value.content.trim().toDoubleOrNull() ?: return null
+    return number.takeIf { it % 1.0 == 0.0 && it in Int.MIN_VALUE.toDouble()..Int.MAX_VALUE.toDouble() }?.toInt()
+}
 
 fun JsonObject.optionalBoolean(name: String): Boolean? = (this[name] as? JsonPrimitive)?.booleanOrNull
 

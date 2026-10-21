@@ -4,8 +4,10 @@ import dev.huecoder.md3agent.data.settings.EmbeddingKind
 import dev.huecoder.md3agent.data.settings.MemorySettings
 import dev.huecoder.md3agent.net.HttpClientProvider
 import dev.huecoder.md3agent.net.fetchText
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -63,7 +65,7 @@ class EmbeddingClient(private val httpClients: HttpClientProvider) {
         val url = endpoint(settings.baseUrl).newBuilder().addPathSegment("models").addPathSegment("$model:batchEmbedContents").build()
         val request = Request.Builder().url(url).header("x-goog-api-key", settings.embeddingApiKey.trim())
             .post(body.toString().toRequestBody(JSON_MEDIA_TYPE)).build()
-        val response = json.parseToJsonElement(httpClients.current().fetchText(request)).jsonObject
+        val response = parse(httpClients.current().fetchText(request, maxChars = Int.MAX_VALUE))
         return response.getValue("embeddings").jsonArray.map { vector(it.jsonObject.getValue("values").jsonArray) }
     }
 
@@ -75,7 +77,7 @@ class EmbeddingClient(private val httpClients: HttpClientProvider) {
         val url = endpoint(settings.baseUrl.removeSuffix("/").removeSuffix("/embeddings")).newBuilder().addPathSegment("embeddings").build()
         val request = Request.Builder().url(url).header("Authorization", "Bearer ${settings.embeddingApiKey.trim()}")
             .post(body.toString().toRequestBody(JSON_MEDIA_TYPE)).build()
-        val response = json.parseToJsonElement(httpClients.current().fetchText(request)).jsonObject
+        val response = parse(httpClients.current().fetchText(request, maxChars = Int.MAX_VALUE))
         return response.getValue("data").jsonArray
             .map { it.jsonObject }
             .sortedBy { it["index"]?.jsonPrimitive?.int ?: 0 }
@@ -90,12 +92,22 @@ class EmbeddingClient(private val httpClients: HttpClientProvider) {
     private fun endpoint(raw: String): HttpUrl =
         raw.trim().removeSuffix("/").toHttpUrlOrNull() ?: throw IllegalStateException("Invalid embeddings address: \"$raw\"")
 
+    // fetchText stops reading at 2 MB; a cut-off body is then not valid JSON, which deserves a clearer message.
+    private fun parse(body: String): JsonObject = try {
+        json.parseToJsonElement(body).jsonObject
+    } catch (e: SerializationException) {
+        throw IllegalStateException("The embedding service answered with something that is not a complete JSON response", e)
+    } catch (e: IllegalArgumentException) {
+        throw IllegalStateException("The embedding service answered with something that is not a complete JSON response", e)
+    }
+
     private fun vector(values: JsonArray) = FloatArray(values.size) { values[it].jsonPrimitive.float }
 
     private companion object {
         const val MODEL_PREFIX = "models/"
         const val PREFIXED_GEMINI_FAMILY = "gemini-embedding-2"
         const val GEMINI_DIMENSIONS = 768
+        // Big enough to save round trips, small enough that 3072-dimension vectors stay well under the 2 MB response cap.
         const val MAX_BATCH = 32
         val JSON_MEDIA_TYPE = "application/json".toMediaType()
     }

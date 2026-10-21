@@ -5,6 +5,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import com.composables.icons.materialsymbols.MaterialSymbols
 import com.composables.icons.materialsymbols.rounded.Manage_search
 import com.composables.icons.materialsymbols.rounded.Bookmark_remove
+import com.composables.icons.materialsymbols.rounded.Bookmarks
 import com.composables.icons.materialsymbols.rounded.Edit_note
 import com.composables.icons.materialsymbols.rounded.Bookmark_add
 import com.composables.icons.materialsymbols.rounded.Bar_chart
@@ -50,7 +51,8 @@ import dev.huecoder.md3agent.tools.files.ReadFileTool
 import dev.huecoder.md3agent.tools.files.SendFilesTool
 import dev.huecoder.md3agent.tools.files.WriteFileTool
 import dev.huecoder.md3agent.tools.memory.MemoryDeleteTool
-import dev.huecoder.md3agent.tools.memory.MemorySaveTool
+import dev.huecoder.md3agent.tools.memory.MemoryAddTool
+import dev.huecoder.md3agent.tools.memory.MemoryListTool
 import dev.huecoder.md3agent.tools.memory.MemorySearchTool
 import dev.huecoder.md3agent.tools.memory.MemoryUpdateTool
 import dev.huecoder.md3agent.tools.reminders.CancelReminderTool
@@ -87,7 +89,8 @@ data class ToolInfo(val icon: ImageVector, val title: UiText, val summary: UiTex
 object ToolCatalog {
     private val known = mapOf(
         AskUserTool.NAME to known(ToolCategory.ASSISTANT, MaterialSymbols.Rounded.Quiz, R.string.tools_ask_user_title, R.string.tools_ask_user_summary),
-        MemorySaveTool.NAME to known(ToolCategory.MEMORY, MaterialSymbols.Rounded.Bookmark_add, R.string.tools_memory_save_title, R.string.tools_memory_save_summary),
+        MemoryAddTool.NAME to known(ToolCategory.MEMORY, MaterialSymbols.Rounded.Bookmark_add, R.string.tools_memory_save_title, R.string.tools_memory_save_summary),
+        MemoryListTool.NAME to known(ToolCategory.MEMORY, MaterialSymbols.Rounded.Bookmarks, R.string.tools_memory_list_title, R.string.tools_memory_list_summary),
         MemoryUpdateTool.NAME to known(ToolCategory.MEMORY, MaterialSymbols.Rounded.Edit_note, R.string.tools_memory_update_title, R.string.tools_memory_update_summary),
         MemoryDeleteTool.NAME to known(ToolCategory.MEMORY, MaterialSymbols.Rounded.Bookmark_remove, R.string.tools_memory_delete_title, R.string.tools_memory_delete_summary),
         MemorySearchTool.NAME to known(ToolCategory.MEMORY, MaterialSymbols.Rounded.Manage_search, R.string.tools_memory_search_title, R.string.tools_memory_search_summary),

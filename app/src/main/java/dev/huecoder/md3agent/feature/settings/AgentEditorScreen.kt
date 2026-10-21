@@ -91,8 +91,7 @@ fun AgentEditorScreen(agentId: String?, onDone: () -> Unit) {
     val save = loaded?.let { state ->
         SaveAction(isDirty = state.isNew || draft != state.saved, canSave = draft.workingShapes.size >= AgentProfile.MIN_WORKING_SHAPES) {
             scope.launch {
-                container.settings.updateAgents { it.upsert(draft) }
-                onDone()
+                if (container.settings.updateAgents { it.upsert(draft) }) onDone()
             }
         }
     }
@@ -133,8 +132,7 @@ fun AgentEditorScreen(agentId: String?, onDone: () -> Unit) {
                 OutlinedButton(
                     onClick = {
                         scope.launch {
-                            container.settings.updateAgents { it.remove(state.saved.id) }
-                            onDone()
+                            if (container.settings.updateAgents { it.remove(state.saved.id) }) onDone()
                         }
                     },
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),

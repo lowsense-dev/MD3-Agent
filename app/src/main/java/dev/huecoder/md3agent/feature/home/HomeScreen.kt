@@ -57,7 +57,8 @@ fun HomeScreen(
 
     BackHandler(enabled = state.isSelecting, onBack = viewModel::clearSelection)
     LaunchedEffect(viewModel) {
-        viewModel.notices.collectLatest { notice ->
+        // collect, not collectLatest: each notice keeps its own undo; the snackbars simply queue.
+        viewModel.notices.collect { notice ->
             val count = notice.chatIds.size
             val message = when (notice) {
                 is HomeNotice.Trashed -> resources.getQuantityString(R.plurals.home_notice_trashed, count, count)

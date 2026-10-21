@@ -3,18 +3,22 @@ package dev.huecoder.md3agent.feature.chat
 import android.Manifest
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import dev.huecoder.md3agent.feature.models.ModelPickerSheet
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -36,6 +40,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -53,6 +59,7 @@ import dev.huecoder.md3agent.conversation.ApprovalDecision
 import dev.huecoder.md3agent.feature.chat.lightbox.LightboxHost
 import dev.huecoder.md3agent.ui.components.AgentAvatar
 import dev.huecoder.md3agent.ui.components.appViewModel
+import dev.huecoder.md3agent.ui.components.savedAppViewModel
 import dev.huecoder.md3agent.ui.text.UiText
 import dev.huecoder.md3agent.ui.text.asString
 import dev.huecoder.md3agent.ui.text.resolve
@@ -67,19 +74,31 @@ import dev.huecoder.md3agent.ui.avatar.knockoutObstacle
 import kotlinx.coroutines.launch
 
 @Composable
-fun ChatScreen(chatId: String?, onBack: () -> Unit, focusMessageId: String? = null) {
-    val viewModel = appViewModel(key = "chat-$chatId") { ChatViewModel(chatId, focusMessageId, it.chats, it.conversations, it.attachments, it.approvals, it.prompts, it.settings, it.modelCatalog, it.applicationScope, it::newSpeechSynthesizer) }
+fun ChatScreen(chatId: String?, onBack: () -> Unit, onOpenChat: (String) -> Unit, focusMessageId: String? = null) {
+    val viewModel = savedAppViewModel(key = "chat-$chatId") { app, saved ->
+        ChatViewModel(chatId, focusMessageId, app.chats, app.conversations, app.attachments, app.approvals, app.prompts, app.settings, app.modelCatalog, app.applicationScope, app::newSpeechSynthesizer, saved)
+    }
     val state by viewModel.state.collectAsStateWithLifecycle()
     val error by viewModel.errors.collectAsStateWithLifecycle()
+    val restoredText by viewModel.restoredText.collectAsStateWithLifecycle()
     val speakingId by viewModel.speakingId.collectAsStateWithLifecycle()
     val prompt by viewModel.pendingPrompt.collectAsStateWithLifecycle()
+    val editing by viewModel.editing.collectAsStateWithLifecycle()
+    val yolo by viewModel.yolo.collectAsStateWithLifecycle()
     val snackbarHost = remember { SnackbarHostState() }
     val context = LocalContext.current
     var input by rememberSaveable { mutableStateOf(viewModel.draft()) }
     val updateInput = { text: String ->
         input = text
-        viewModel.saveDraft(text)
+        if (viewModel.editing.value == null) viewModel.saveDraft(text)
     }
+    val cancelEdit: () -> Unit = { viewModel.cancelEdit()?.let { input = it } }
+    val startEdit: (ChatItem.User) -> Unit = { item ->
+        viewModel.startEdit(item, input)
+        input = item.content
+    }
+    val forkTitle = stringResource(R.string.chat_fork_title, state.title.asString())
+    BackHandler(enabled = editing != null) { cancelEdit() }
     var pickingModel by rememberSaveable { mutableStateOf(false) }
     val typingAttention = remember { TypingAttention() }
     val knockout = remember { KnockoutStage() }
@@ -95,6 +114,10 @@ fun ChatScreen(chatId: String?, onBack: () -> Unit, focusMessageId: String? = nu
     val pickFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) viewModel.attach(uris)
     }
+    var cameraOpen by rememberSaveable { mutableStateOf(false) }
+    val pickPhotos = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
+        if (uris.isNotEmpty()) viewModel.attach(uris)
+    }
     val dictationModel = appViewModel(key = "dictation-$chatId") { DictationViewModel(it.newVoiceRecorder(), it.transcriptions, it.settings) }
     val askMicrophone = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) dictationModel.start() else dictationModel.fail(UiText.Resource(R.string.dictation_error_microphone_denied))
@@ -107,6 +130,23 @@ fun ChatScreen(chatId: String?, onBack: () -> Unit, focusMessageId: String? = nu
         },
         onPermissionMissing = { askMicrophone.launch(Manifest.permission.RECORD_AUDIO) },
     )
+
+    if (cameraOpen) {
+        InAppCamera(
+            onDismiss = { cameraOpen = false },
+            onPhoto = { uri ->
+                cameraOpen = false
+                viewModel.attach(listOf(uri))
+            },
+        )
+    }
+
+    LaunchedEffect(restoredText) {
+        restoredText?.let {
+            updateInput(listOf(it, input).filter(String::isNotBlank).joinToString("\n"))
+            viewModel.consumeRestoredText()
+        }
+    }
 
     LaunchedEffect(error) {
         error?.let {
@@ -137,11 +177,16 @@ fun ChatScreen(chatId: String?, onBack: () -> Unit, focusMessageId: String? = nu
                         onRename = viewModel::rename,
                         onDelete = { viewModel.delete(); onBack() },
                         onLookChange = viewModel::setLook,
+                        yolo = yolo,
+                        onYoloChange = viewModel::setYolo,
+                        onCompact = viewModel::compact,
                     )
                 },
                 snackbarHost = { SnackbarHost(snackbarHost) },
             ) { padding ->
-                Box(Modifier.fillMaxSize().padding(top = padding.calculateTopPadding()).imePadding().knockoutArea(knockout)) {
+                val topBar = padding.calculateTopPadding()
+                Box(Modifier.fillMaxSize().imePadding()) {
+                    Box(Modifier.matchParentSize().padding(top = topBar).knockoutArea(knockout))
                     val isEmpty = state.messages.isEmpty()
                     if (!isEmpty) {
                         MessageList(
@@ -151,8 +196,14 @@ fun ChatScreen(chatId: String?, onBack: () -> Unit, focusMessageId: String? = nu
                             speakingId = speakingId,
                             onRegenerate = viewModel::regenerate,
                             onToggleSpeech = viewModel::toggleSpeech,
-                            onSend = viewModel::send,
+                            onSend = {
+                                cancelEdit()
+                                viewModel.send(it)
+                            },
                             onApproval = viewModel::respondToApproval,
+                            onEdit = startEdit.takeUnless { state.isStreaming },
+                            onFork = { viewModel.fork(it.id, forkTitle, onOpenChat) },
+                            topPadding = topBar,
                             bottomPadding = composerHeight + COMPOSER_GAP,
                             scrollButtonPadding = composerHeight,
                             focusItemId = state.focusItemId,
@@ -163,7 +214,7 @@ fun ChatScreen(chatId: String?, onBack: () -> Unit, focusMessageId: String? = nu
                     }
                     if (isEmpty || handoff.isActive) {
                         EmptyConversation(
-                            Modifier.align(Alignment.Center),
+                            Modifier.align(Alignment.Center).padding(top = topBar),
                             interactive = isEmpty,
                             typing = typingAttention,
                             listeningLevel = dictation.listeningLevel(),
@@ -171,37 +222,51 @@ fun ChatScreen(chatId: String?, onBack: () -> Unit, focusMessageId: String? = nu
                             handoff = handoff,
                         )
                     }
+                    // Messages fade out under the transparent top bar instead of running into its text.
+                    val fade = MaterialTheme.colorScheme.background
+                    Box(
+                        Modifier.fillMaxWidth().height(topBar + TOP_FADE_EXTRA)
+                            .background(Brush.verticalGradient(0f to fade, (topBar - TOP_FADE_SOLID_GAP) / (topBar + TOP_FADE_EXTRA) to fade, 1f to Color.Transparent)),
+                    )
                     val composerModifier = Modifier
                         .align(Alignment.BottomCenter)
                         .onSizeChanged { composerHeight = with(density) { it.height.toDp() } }
                         .knockoutObstacle(knockout, COMPOSER_OBSTACLE)
-                        .background(MaterialTheme.colorScheme.surface)
                         .navigationBarsPadding()
                         .padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 12.dp)
                     val asked = prompt
                     if (asked != null) {
                         PromptPanel(asked, onAnswer = { viewModel.answerPrompt(asked, it) }, modifier = composerModifier)
                     } else {
-                        ChatInput(
-                            text = input,
-                            onTextChange = updateInput,
-                            isStreaming = state.isStreaming,
-                            canSend = state.canSend(input),
-                            onSend = {
-                                sendEntrance.arm()
-                                viewModel.send(input)
-                                updateInput("")
-                            },
-                            onStop = viewModel::stop,
-                            attachments = state.pendingAttachments,
-                            isImporting = state.isImporting,
-                            onAttach = { pickFiles.launch(PICKABLE_MIME_TYPES) },
-                            onRemoveAttachment = viewModel::removeAttachment,
-                            onPasteImages = viewModel::attach,
-                            dictation = dictation,
-                            modifier = composerModifier,
-                            onLetterTyped = typingAttention::onLetter,
-                        )
+                        Column(composerModifier) {
+                            if (editing != null) EditingBanner(onCancel = cancelEdit)
+                            ChatInput(
+                                text = input,
+                                onTextChange = updateInput,
+                                isStreaming = state.isStreaming,
+                                canSend = state.canSend(input),
+                                onSend = {
+                                    sendEntrance.arm()
+                                    val restored = viewModel.editing.value?.previousText
+                                    viewModel.send(input)
+                                    if (restored != null) input = restored else updateInput("")
+                                },
+                                onStop = viewModel::stop,
+                                attachments = state.pendingAttachments,
+                                isImporting = state.isImporting,
+                                onAttach = { source ->
+                                    when (source) {
+                                        AttachSource.CAMERA -> cameraOpen = true
+                                        AttachSource.PHOTOS -> pickPhotos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                                        AttachSource.FILES -> pickFiles.launch(PICKABLE_MIME_TYPES)
+                                    }
+                                },
+                                onRemoveAttachment = viewModel::removeAttachment,
+                                onPasteImages = viewModel::attach,
+                                dictation = dictation,
+                                onLetterTyped = typingAttention::onLetter,
+                            )
+                        }
                     }
                 }
             }
@@ -220,17 +285,25 @@ fun MessageList(
     onSend: (String) -> Unit,
     onApproval: (ToolCallUi, ApprovalDecision) -> Unit,
     modifier: Modifier = Modifier.fillMaxSize(),
+    topPadding: Dp = 0.dp,
     bottomPadding: Dp = ComposerClearance,
     scrollButtonPadding: Dp = bottomPadding,
     focusItemId: String? = null,
     onFocusShown: () -> Unit = {},
     avatarHandoff: AvatarHandoff? = null,
     sendEntrance: SendEntrance? = null,
+    onEdit: ((ChatItem.User) -> Unit)? = null,
+    onFork: ((ChatItem) -> Unit)? = null,
 ) {
     val handoffTargetId = if (avatarHandoff?.isActive == true) messages.firstOrNull { it is ChatItem.Reply }?.id else null
     val newestId = messages.lastOrNull()?.id
     val newestUserId = messages.lastOrNull { it is ChatItem.User }?.id
     val listState = rememberLazyListState()
+    var seenUserId by remember { mutableStateOf(newestUserId) }
+    LaunchedEffect(newestUserId) {
+        if (seenUserId != null && newestUserId != seenUserId) listState.animateScrollToItem(0)
+        seenUserId = newestUserId
+    }
     val anchor = rememberScrollAnchor(listState)
     val atBottom by remember(anchor) { derivedStateOf { anchor.isAtBottom } }
     val scope = rememberCoroutineScope()
@@ -254,7 +327,7 @@ fun MessageList(
             state = listState,
             reverseLayout = true,
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = bottomPadding),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp + topPadding, bottom = bottomPadding),
             verticalArrangement = Arrangement.spacedBy(20.dp, Alignment.Bottom),
         ) {
             items(messages.asReversed(), key = { it.id }) { item ->
@@ -273,7 +346,12 @@ fun MessageList(
                         },
                     )
                 when (item) {
-                    is ChatItem.User -> UserMessage(item, placed.sentEntrance(sendEntrance, item.id == newestUserId, item.id))
+                    is ChatItem.User -> UserMessage(
+                        item,
+                        placed.sentEntrance(sendEntrance, item.id == newestUserId, item.id),
+                        onEdit = onEdit?.let { edit -> { edit(item) } },
+                        onFork = onFork?.let { fork -> { fork(item) } },
+                    )
                     is ChatItem.Reply -> AssistantReply(
                         item,
                         showUsage = showUsage,
@@ -285,7 +363,9 @@ fun MessageList(
                         onApproval = onApproval,
                         modifier = placed,
                         avatarHandoff = avatarHandoff.takeIf { item.id == handoffTargetId },
+                        onFork = onFork?.let { fork -> { fork(item) } },
                     )
+                    is ChatItem.Compacted -> CompactedDivider(item, placed)
                 }
             }
         }
@@ -338,6 +418,9 @@ private val COMPOSER_GAP = 8.dp
 
 private const val GREETING_OBSTACLE = "greeting"
 private const val COMPOSER_OBSTACLE = "composer"
+private val TOP_FADE_EXTRA = 24.dp
+// The fade is solid down to just under the bar's buttons, so nothing shows through behind them.
+private val TOP_FADE_SOLID_GAP = 16.dp
 
 private val PICKABLE_MIME_TYPES = arrayOf("*/*")
 

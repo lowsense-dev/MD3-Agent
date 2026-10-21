@@ -13,6 +13,7 @@ data class ToolSettings(
     val weather: WeatherSettings = WeatherSettings(),
     val search: SearchSettings = SearchSettings(),
     val fetch: FetchSettings = FetchSettings(),
+    val firecrawl: FirecrawlSettings = FirecrawlSettings(),
     val access: AccessSettings = AccessSettings(),
     val mcpServers: List<McpServer> = emptyList(),
     val memory: MemorySettings = MemorySettings(),
@@ -23,11 +24,18 @@ data class ToolSettings(
     fun withPermission(toolName: String, permission: ToolPermission) = copy(permissions = permissions + (toolName to permission))
 
     fun migrated(): ToolSettings {
-        val withPermissions =
-            if (legacyDisabled.isEmpty()) this else copy(legacyDisabled = emptySet(), permissions = legacyDisabled.associateWith { ToolPermission.OFF } + permissions)
+        val withPermissions = copy(
+            legacyDisabled = emptySet(),
+            permissions = (legacyDisabled.associateWith { ToolPermission.OFF } + permissions).withRenamedTools(),
+        )
         return withPermissions.copy(phoneUse = withPermissions.phoneUse.withCurrentPanelDefaults())
     }
 }
+
+private val RENAMED_TOOLS = mapOf("memory_save" to "memory_add")
+
+fun Map<String, ToolPermission>.withRenamedTools(): Map<String, ToolPermission> =
+    if (keys.none(RENAMED_TOOLS::containsKey)) this else mapKeys { (name, _) -> RENAMED_TOOLS[name] ?: name }
 
 @Serializable
 data class WeatherSettings(
@@ -41,7 +49,7 @@ data class WeatherSettings(
 }
 
 @Serializable
-enum class SearchBackend { HTML_SCRAPE, SEARXNG, BRAVE_API }
+enum class SearchBackend { HTML_SCRAPE, SEARXNG, BRAVE_API, FIRECRAWL }
 
 @Serializable
 data class SearchSettings(
@@ -51,7 +59,7 @@ data class SearchSettings(
 )
 
 @Serializable
-enum class FetchBackend { DIRECT, JINA_READER, CUSTOM }
+enum class FetchBackend { DIRECT, JINA_READER, CUSTOM, FIRECRAWL }
 
 @Serializable
 data class FetchSettings(
@@ -63,6 +71,13 @@ data class FetchSettings(
     companion object {
         const val URL_PLACEHOLDER = "{url}"
         const val JINA_READER_URL = "https://r.jina.ai/$URL_PLACEHOLDER"
+    }
+}
+
+@Serializable
+data class FirecrawlSettings(val baseUrl: String = DEFAULT_BASE_URL, val apiKey: String = "") {
+    companion object {
+        const val DEFAULT_BASE_URL = "https://api.firecrawl.dev"
     }
 }
 
@@ -103,6 +118,7 @@ data class McpOAuthSession(
     val accessToken: String,
     val refreshToken: String? = null,
     val expiresAt: Long? = null,
+    val resource: String? = null,
 )
 
 @Serializable

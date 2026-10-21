@@ -54,6 +54,7 @@ import dev.huecoder.md3agent.R
 import dev.huecoder.md3agent.data.settings.PhoneUseSettings
 import dev.huecoder.md3agent.feature.chat.ChatInput
 import dev.huecoder.md3agent.feature.chat.ChatItem
+import dev.huecoder.md3agent.feature.chat.CompactedDivider
 import dev.huecoder.md3agent.feature.chat.ChatUiState
 import dev.huecoder.md3agent.feature.chat.ReplyPart
 import dev.huecoder.md3agent.feature.chat.ReplyText
@@ -189,6 +190,7 @@ private fun PlateLog(state: ChatUiState, modifier: Modifier) {
         items(state.messages.asReversed(), key = { it.id }) { item ->
             when (item) {
                 is ChatItem.User -> UserMessage(item)
+                is ChatItem.Compacted -> CompactedDivider(item)
                 is ChatItem.Reply -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     item.parts.forEach { part ->
                         when (part) {

@@ -1,6 +1,7 @@
 package dev.huecoder.md3agent.feature.chat
 
 import dev.huecoder.md3agent.R
+import dev.huecoder.md3agent.conversation.Compaction
 import dev.huecoder.md3agent.conversation.StreamingDraft
 import dev.huecoder.md3agent.conversation.TurnAssembler
 import dev.huecoder.md3agent.data.attachments.Attachment
@@ -9,12 +10,14 @@ import dev.huecoder.md3agent.data.db.MessageRole
 import dev.huecoder.md3agent.data.db.MessageStatus
 import dev.huecoder.md3agent.llm.TokenUsage
 import dev.huecoder.md3agent.llm.ToolCall
+import dev.huecoder.md3agent.llm.models.ModelInfo
 import dev.huecoder.md3agent.tools.ChartSpec
 import dev.huecoder.md3agent.tools.ReplyUi
 import dev.huecoder.md3agent.tools.ShowChartTool
 import dev.huecoder.md3agent.tools.ShowDiagramTool
 import dev.huecoder.md3agent.tools.DiagramSpec
 import dev.huecoder.md3agent.tools.ShowUiTool
+import dev.huecoder.md3agent.tools.withoutUntrustedTags
 import dev.huecoder.md3agent.tools.web.ReadWebpageTool
 import dev.huecoder.md3agent.tools.web.SearchResults
 import dev.huecoder.md3agent.tools.web.WebSearchTool
@@ -43,6 +46,9 @@ sealed interface ChatItem {
 
     data class User(override val id: String, val content: String, val attachments: List<Attachment>) : ChatItem
 
+    /** Where the conversation was summarized; the model sees [summary] instead of everything above it. */
+    data class Compacted(override val id: String, val summary: String) : ChatItem
+
     data class Reply(
         override val id: String,
         val parts: List<ReplyPart>,
@@ -53,6 +59,8 @@ sealed interface ChatItem {
         val usage: TokenUsage?,
         val end: ReplyEnd?,
         val anchor: MessageEntity,
+        val cost: Double? = null,
+        val contextShare: Float? = null,
     ) : ChatItem
 }
 
@@ -95,37 +103,75 @@ object ChatTimeline {
         return items.lastOrNull { item -> createdAt[item.id]?.let { it <= target } == true }?.id
     }
 
-    fun build(messages: List<MessageEntity>, draft: StreamingDraft?): List<ChatItem> {
+    /**
+     * Finished replies from the previous build, reused while their rows are unchanged so streaming one reply neither
+     * rebuilds nor recomposes the rest of the chat (equal inputs give the same instance).
+     */
+    class ReplyMemo {
+        internal var replies: Map<ReplyKey, ChatItem.Reply> = emptyMap()
+    }
+
+    internal data class ReplyKey(val rows: List<MessageEntity>, val isLatest: Boolean, val models: List<ModelInfo?>)
+
+    fun build(
+        messages: List<MessageEntity>,
+        draft: StreamingDraft?,
+        memo: ReplyMemo? = null,
+        infoFor: (String) -> ModelInfo? = { null },
+    ): List<ChatItem> {
         val results = messages.filter { it.role == MessageRole.TOOL }.associateBy { it.toolCallId }
-        val visible = messages.filter { it.role == MessageRole.USER || it.role == MessageRole.ASSISTANT }
         val items = mutableListOf<ChatItem>()
         val pendingRounds = mutableListOf<MessageEntity>()
+        // Rounds plus the tool results that follow them: everything a reply is built from.
+        val span = mutableListOf<MessageEntity>()
+        val reused = HashMap<ReplyKey, ChatItem.Reply>()
 
         fun flushReply(isLatest: Boolean) {
             if (pendingRounds.isEmpty()) return
-            items += reply(pendingRounds.toList(), results, draft, isLatest)
+            val live = draft != null && (isLatest || pendingRounds.any { it.id == draft.messageId })
+            val key = if (memo == null || live) null else ReplyKey(span.toList(), isLatest, pendingRounds.map { row -> row.modelId?.let(infoFor) })
+            val item = key?.let { memo?.replies?.get(it) } ?: reply(pendingRounds.toList(), results, draft, isLatest, infoFor)
+            key?.let { reused[it] = item }
+            items += item
             pendingRounds.clear()
+            span.clear()
         }
 
-        for (row in visible) {
-            if (row.role == MessageRole.ASSISTANT) {
-                pendingRounds += row
-            } else {
-                flushReply(isLatest = false)
-                items += ChatItem.User(row.id, row.content, Attachment.decode(row.attachmentsJson))
+        for (row in messages) {
+            when {
+                row.role == MessageRole.ASSISTANT -> {
+                    pendingRounds += row
+                    span += row
+                }
+                row.role == MessageRole.TOOL -> if (pendingRounds.isNotEmpty()) span += row
+                row.role == MessageRole.USER -> {
+                    flushReply(isLatest = false)
+                    items += ChatItem.User(row.id, row.content, Attachment.decode(row.attachmentsJson))
+                }
+                Compaction.isCompaction(row) -> {
+                    flushReply(isLatest = false)
+                    items += ChatItem.Compacted(row.id, row.content)
+                }
             }
         }
         flushReply(isLatest = true)
+        memo?.replies = reused
         return items
     }
 
-    private fun reply(rounds: List<MessageEntity>, results: Map<String?, MessageEntity>, draft: StreamingDraft?, isLatest: Boolean): ChatItem.Reply {
+    private fun reply(
+        rounds: List<MessageEntity>,
+        results: Map<String?, MessageEntity>,
+        draft: StreamingDraft?,
+        isLatest: Boolean,
+        infoFor: (String) -> ModelInfo?,
+    ): ChatItem.Reply {
         val live = draft?.takeIf { d -> rounds.any { it.id == d.messageId } }
         val views = rounds.map { RoundView.of(it, live) }
         val isActive = draft != null && isLatest
         val usages = rounds.mapNotNull { row ->
-            if (row.promptTokens != null && row.completionTokens != null) TokenUsage(row.promptTokens, row.completionTokens, row.cachedTokens ?: 0) else null
-        } + listOfNotNull(live?.usage)
+            if (row.promptTokens != null && row.completionTokens != null) row.modelId to TokenUsage(row.promptTokens, row.completionTokens, row.cachedTokens ?: 0) else null
+        } + listOfNotNull(live?.let { d -> d.usage?.let { usage -> rounds.firstOrNull { it.id == d.messageId }?.modelId to usage } })
         val parts = views.flatMap { it.parts(results, live?.takeIf { d -> d.messageId == it.row.id }) }.mergeAdjacentWork()
         return ChatItem.Reply(
             id = rounds.first().id,
@@ -134,10 +180,19 @@ object ChatTimeline {
             isWaiting = isActive && parts.isEmpty(),
             startedAt = rounds.first().createdAt,
             finishedAt = if (isActive) null else rounds.last().finishedAt,
-            usage = usages.reduceOrNull(TokenUsage::plus),
+            usage = usages.map { it.second }.reduceOrNull(TokenUsage::plus),
             end = if (isActive) null else replyEnd(rounds, results, isLatest),
             anchor = rounds.first(),
+            cost = costOf(usages, infoFor),
+            contextShare = usages.lastOrNull()?.let { (modelId, usage) ->
+                modelId?.let(infoFor)?.contextWindow?.let { usage.promptTokens.toFloat() / it }
+            },
         )
+    }
+
+    private fun costOf(usages: List<Pair<String?, TokenUsage>>, infoFor: (String) -> ModelInfo?): Double? {
+        if (usages.isEmpty()) return null
+        return usages.sumOf { (modelId, usage) -> modelId?.let(infoFor)?.price?.cost(usage) ?: return null }
     }
 
     private class RoundView(val row: MessageEntity, val content: String, val reasoning: String, val calls: List<ToolCall>) {
@@ -166,6 +221,8 @@ object ChatTimeline {
                 isLive -> Unit
                 row.status == MessageStatus.ERROR -> add(ReplyPart.Error(row.errorText?.let(UiText::Raw) ?: UiText.Resource(R.string.chat_error_unknown)))
                 row.status == MessageStatus.COMPLETE && content.isEmpty() && calls.isEmpty() && generated.isEmpty() -> add(ReplyPart.Error(UiText.Resource(R.string.chat_error_empty_response)))
+                // The runner only sets errorText on a complete reply when the output token limit cut it off.
+                row.status == MessageStatus.COMPLETE && row.errorText != null -> add(ReplyPart.Error(UiText.Resource(R.string.chat_reply_truncated)))
             }
         }
 
@@ -203,7 +260,7 @@ object ChatTimeline {
             live != null -> ToolStatus.RUNNING
             else -> ToolStatus.CANCELLED
         }
-        return ToolCallUi(id, name, parseArguments(arguments), status, result?.content, Attachment.decode(result?.attachmentsJson))
+        return ToolCallUi(id, name, parseArguments(arguments), status, result?.content?.let(::withoutUntrustedTags), Attachment.decode(result?.attachmentsJson))
     }
 
     private fun replyEnd(rows: List<MessageEntity>, results: Map<String?, MessageEntity>, isLatest: Boolean): ReplyEnd {
@@ -220,7 +277,7 @@ object ChatTimeline {
     private fun sourcesOf(call: ToolCall, result: MessageEntity?): List<SourceUi> {
         if (result == null || result.status == MessageStatus.ERROR) return emptyList()
         return when (call.name) {
-            WebSearchTool.NAME -> runCatching { json.decodeFromString(SearchResults.serializer(), result.content) }
+            WebSearchTool.NAME -> runCatching { json.decodeFromString(SearchResults.serializer(), withoutUntrustedTags(result.content)) }
                 .getOrNull()?.results.orEmpty().mapNotNull { source(it.title, it.url) }
             ReadWebpageTool.NAME -> listOfNotNull(
                 (parseArguments(call.arguments)["url"] as? JsonPrimitive)?.content?.let { source(title = it, url = it) },

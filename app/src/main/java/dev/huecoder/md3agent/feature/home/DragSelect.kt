@@ -14,6 +14,8 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -35,12 +37,13 @@ fun Modifier.dragToSelect(
     isSelectable: (Any) -> Boolean,
     onRange: (anchor: String, current: String) -> Unit,
     onEnd: () -> Unit,
-): Modifier = dragSelect(grid, scope, { grid.keyAt(it) }, isSelectable, onRange, onEnd)
+    leftPadding: Dp = 0.dp,
+): Modifier = dragSelect(grid, scope, { grid.keyAt(it - Offset(leftPadding.toPx(), 0f)) }, isSelectable, onRange, onEnd)
 
 private fun Modifier.dragSelect(
     scrollable: ScrollableState,
     scope: CoroutineScope,
-    keyAt: (Offset) -> Any?,
+    keyAt: Density.(Offset) -> Any?,
     isSelectable: (Any) -> Boolean,
     onRange: (anchor: String, current: String) -> Unit,
     onEnd: () -> Unit,

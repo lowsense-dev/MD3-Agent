@@ -100,10 +100,9 @@ fun VoiceProviderEditorScreen(providerId: String?, onDone: () -> Unit) {
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                 modifier = Modifier.fillMaxWidth(),
             )
-            SecretField(
+            ApiKeysField(
                 value = current.apiKey,
                 onValueChange = { value -> viewModel.edit { it.copy(apiKey = value) } },
-                label = stringResource(R.string.provider_api_key),
             )
 
             SectionHeader(stringResource(R.string.voice_provider_section_models))

@@ -28,7 +28,7 @@ data class AgentProfile(
     val toolPermissions: Map<String, ToolPermission> = emptyMap(),
     val voice: AgentVoice = AgentVoice(),
 ) {
-    fun tools(base: ToolSettings): ToolSettings = base.copy(permissions = base.permissions + toolPermissions)
+    fun tools(base: ToolSettings): ToolSettings = base.copy(permissions = base.permissions + toolPermissions.withRenamedTools())
 
     companion object {
         const val MAIN_AGENT_ID = "main"

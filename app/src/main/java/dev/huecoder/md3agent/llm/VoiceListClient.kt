@@ -28,6 +28,10 @@ class VoiceListClient(private val httpClients: HttpClientProvider) {
 
     suspend fun list(provider: ProviderProfile): List<SpeechVoice> {
         if (provider.format != ApiFormat.ELEVENLABS) return emptyList()
+        return KeyRotation.withFailover(provider) { fetch(it) }
+    }
+
+    private suspend fun fetch(provider: ProviderProfile): List<SpeechVoice> {
         val request = ProviderEndpoint(provider).authorizedRequest(VOICES_PATH).get().build()
         return try {
             withContext(Dispatchers.IO) {

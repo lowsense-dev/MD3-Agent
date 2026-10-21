@@ -43,7 +43,9 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.getByName("release")
+            // Without the release keystore (keystore/keystore.properties), sign with the debug key so a fast optimized build
+            // still installs over the debug one on a development phone without wiping its data.
+            signingConfig = signingConfigs.getByName(if (signingProperties.isNotEmpty()) "release" else "debug")
         }
     }
 
@@ -64,6 +66,15 @@ android {
 chaquopy {
     defaultConfig {
         version = "3.13"
+        // Libraries scripts reach for first; without them run_python fails on the import line.
+        pip {
+            install("numpy")
+            install("pandas")
+            install("matplotlib")
+            install("pillow")
+            install("requests")
+            install("beautifulsoup4")
+        }
     }
 }
 
@@ -118,6 +129,10 @@ dependencies {
     implementation(libs.shizuku.api)
     implementation(libs.shizuku.provider)
     implementation(libs.dyn4j)
+    implementation(libs.camerax.core)
+    implementation(libs.camerax.camera2)
+    implementation(libs.camerax.lifecycle)
+    implementation(libs.camerax.view)
 
     testImplementation(libs.junit)
     testImplementation(libs.okhttp.mockwebserver)

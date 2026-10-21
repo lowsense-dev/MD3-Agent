@@ -26,11 +26,13 @@ class TranscriptionClient(private val httpClients: HttpClientProvider) {
     private val json = Json { ignoreUnknownKeys = true }
 
     suspend fun transcribe(provider: ProviderProfile, model: String, language: String, audio: File, mimeType: String): String =
-        when (provider.format) {
-            ApiFormat.OPENAI -> openAi(provider, model, language, audio, mimeType)
-            ApiFormat.GEMINI -> gemini(provider, model, language, audio, mimeType)
-            ApiFormat.ELEVENLABS -> elevenLabs(provider, model, language, audio, mimeType)
-            ApiFormat.ANTHROPIC -> throw ProviderException.InvalidConfiguration("Anthropic has no speech recognition API")
+        KeyRotation.withFailover(provider) { keyed ->
+            when (keyed.format) {
+                ApiFormat.OPENAI -> openAi(keyed, model, language, audio, mimeType)
+                ApiFormat.GEMINI -> gemini(keyed, model, language, audio, mimeType)
+                ApiFormat.ELEVENLABS -> elevenLabs(keyed, model, language, audio, mimeType)
+                ApiFormat.ANTHROPIC -> throw ProviderException.InvalidConfiguration("Anthropic has no speech recognition API")
+            }
         }
 
     private suspend fun openAi(provider: ProviderProfile, model: String, language: String, audio: File, mimeType: String): String {
@@ -59,6 +61,10 @@ class TranscriptionClient(private val httpClients: HttpClientProvider) {
     }
 
     private suspend fun gemini(provider: ProviderProfile, model: String, language: String, audio: File, mimeType: String): String {
+        // Gemini takes at most ~20 MB of inline request data; base64 adds a third, so refuse clearly instead of a bare HTTP 400.
+        if (audio.length() > GEMINI_MAX_INLINE_AUDIO_BYTES) {
+            throw ProviderException.InvalidConfiguration("The recording is too long for Gemini (over ${GEMINI_MAX_INLINE_AUDIO_BYTES / BYTES_PER_MB} MB); record a shorter part")
+        }
         val encoded = withContext(Dispatchers.IO) { Base64.getEncoder().encodeToString(audio.readBytes()) }
         val body = buildJsonObject {
             putJsonArray("contents") {
@@ -91,6 +97,8 @@ class TranscriptionClient(private val httpClients: HttpClientProvider) {
         const val TRANSCRIPTIONS_PATH = "audio/transcriptions"
         const val ELEVENLABS_TRANSCRIPTIONS_PATH = "speech-to-text"
         const val ERROR_PREVIEW_CHARS = 200
+        const val GEMINI_MAX_INLINE_AUDIO_BYTES = 14L * 1024 * 1024
+        const val BYTES_PER_MB = 1024 * 1024
         const val GEMINI_PROMPT = "Transcribe the speech in this audio word for word. Reply with the transcript only, without quotes or commentary. " +
             "If there is no speech, reply with an empty message."
     }

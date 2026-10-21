@@ -21,6 +21,7 @@ import dev.huecoder.md3agent.tools.requireString
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 
 object PhoneRequestParser {
@@ -66,7 +67,7 @@ object PhoneRequestParser {
         "long_press" -> PhoneAction.LongPress(target(arguments, name))
         "double_tap" -> PhoneAction.DoubleTap(target(arguments, name))
         "tap_at" -> PhoneAction.TapAt(coordinate(arguments, "x"), coordinate(arguments, "y"))
-        "type" -> PhoneAction.Type(optionalTarget(arguments), arguments.requireString("text"), arguments.optionalBoolean("submit") ?: false)
+        "type" -> PhoneAction.Type(optionalTarget(arguments), (arguments["text"] as? JsonPrimitive)?.contentOrNull ?: missing("text"), arguments.optionalBoolean("submit") ?: false)
         "scroll" -> PhoneAction.Scroll(optionalTarget(arguments), scrollDirection(arguments))
         "scroll_to" -> PhoneAction.ScrollTo(
             selector(arguments) ?: throw ToolArgumentException("scroll_to needs a 'target' with text, id or role"),

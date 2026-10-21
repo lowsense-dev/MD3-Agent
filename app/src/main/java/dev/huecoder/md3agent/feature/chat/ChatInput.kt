@@ -43,6 +43,7 @@ import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.DropdownMenuPopup
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
@@ -68,14 +69,20 @@ import androidx.compose.ui.unit.dp
 import com.composables.icons.materialsymbols.MaterialSymbols
 import com.composables.icons.materialsymbols.rounded.Arrow_upward
 import com.composables.icons.materialsymbols.rounded.Attach_file
+import com.composables.icons.materialsymbols.rounded.Photo_camera
 import com.composables.icons.materialsymbols.rounded.Check
 import com.composables.icons.materialsymbols.rounded.Close
 import com.composables.icons.materialsymbols.rounded.Mic
+import com.composables.icons.materialsymbols.rounded.Folder_open
+import com.composables.icons.materialsymbols.rounded.Image
 import com.composables.icons.materialsymbols.roundedfilled.Stop
 import dev.huecoder.md3agent.R
 import dev.huecoder.md3agent.data.attachments.Attachment
 import dev.huecoder.md3agent.ui.haptics.rememberHaptics
 import dev.huecoder.md3agent.voice.DictationState
+import dev.huecoder.md3agent.ui.components.ShapeBadge
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.foundation.layout.Arrangement
 
 private val InlineShape = RoundedCornerShape(percent = 50)
 private val StackedShape = RoundedCornerShape(28.dp)
@@ -93,7 +100,7 @@ fun ChatInput(
     modifier: Modifier = Modifier,
     attachments: List<Attachment> = emptyList(),
     isImporting: Boolean = false,
-    onAttach: (() -> Unit)? = null,
+    onAttach: ((AttachSource) -> Unit)? = null,
     onRemoveAttachment: (Attachment) -> Unit = {},
     onPasteImages: ((List<Uri>) -> Unit)? = null,
     dictation: DictationControls? = null,
@@ -116,9 +123,11 @@ fun ChatInput(
     if (settledAt != wrappedAt) wrappedAt = settledAt
     val stacked = ComposerStacking.isStacked(settledAt, text) && !isDictating
     var sentText by remember { mutableStateOf<String?>(null) }
-    val leading: (() -> Unit)? = if (isDictating) dictation?.onCancel else onAttach
+    val hasLeading = if (isDictating) dictation?.onCancel != null else onAttach != null
 
-    val leadingButton = @Composable { leading?.let { LeadingButton(isDictating, it) } }
+    val leadingButton = @Composable {
+        if (isDictating) dictation?.onCancel?.let { CancelDictationButton(it) } else onAttach?.let { AttachMenu(it) }
+    }
     val actionButton = @Composable {
         if (steering) {
             StopButton(onClick = { haptics.confirm(); onStop() })
@@ -174,7 +183,7 @@ fun ChatInput(
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (!stacked) leadingButton()
-                field(Modifier.weight(1f).padding(start = if (stacked || leading == null) FIELD_SIDE_INSET else 0.dp, end = if (stacked) FIELD_SIDE_INSET else 4.dp))
+                field(Modifier.weight(1f).padding(start = if (stacked || !hasLeading) FIELD_SIDE_INSET else 0.dp, end = if (stacked) FIELD_SIDE_INSET else 4.dp))
                 if (!stacked) actionButton()
             }
             if (stacked) {
@@ -222,15 +231,71 @@ private fun StopButton(onClick: () -> Unit) {
 }
 
 @Composable
-private fun LeadingButton(isDictating: Boolean, onClick: () -> Unit) {
+private fun CancelDictationButton(onClick: () -> Unit) {
     IconButton(onClick = onClick, shapes = IconButtonDefaults.shapes()) {
-        if (isDictating) {
-            Icon(MaterialSymbols.Rounded.Close, contentDescription = stringResource(R.string.dictation_cancel))
-        } else {
+        Icon(MaterialSymbols.Rounded.Close, contentDescription = stringResource(R.string.dictation_cancel))
+    }
+}
+
+enum class AttachSource { CAMERA, PHOTOS, FILES }
+
+private class AttachItem(val source: AttachSource, val icon: ImageVector, @StringRes val label: Int, @StringRes val hint: Int)
+
+private val ATTACH_ITEMS = listOf(
+    AttachItem(AttachSource.CAMERA, MaterialSymbols.Rounded.Photo_camera, R.string.chat_attach_camera, R.string.chat_attach_camera_hint),
+    AttachItem(AttachSource.PHOTOS, MaterialSymbols.Rounded.Image, R.string.chat_attach_photos, R.string.chat_attach_photos_hint),
+    AttachItem(AttachSource.FILES, MaterialSymbols.Rounded.Folder_open, R.string.chat_attach_files, R.string.chat_attach_files_hint),
+)
+
+/** Expressive menu group: one rounded container, items with large outer and small inner corners, icons in shapes. */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun AttachMenu(onPick: (AttachSource) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    val colors = MaterialTheme.colorScheme
+    val badges = listOf(colors.primaryContainer to colors.onPrimaryContainer, colors.tertiaryContainer to colors.onTertiaryContainer, colors.secondaryContainer to colors.onSecondaryContainer)
+    Box {
+        IconButton(onClick = { open = true }, shapes = IconButtonDefaults.shapes()) {
             Icon(MaterialSymbols.Rounded.Attach_file, contentDescription = stringResource(R.string.chat_attach_file))
+        }
+        DropdownMenuPopup(expanded = open, onDismissRequest = { open = false }) {
+            Surface(shape = RoundedCornerShape(MENU_OUTER_CORNER), color = colors.surfaceContainerHigh, shadowElevation = 6.dp, modifier = Modifier.width(MENU_WIDTH)) {
+                Column(Modifier.padding(MENU_PADDING), verticalArrangement = Arrangement.spacedBy(MENU_GAP)) {
+                    ATTACH_ITEMS.forEachIndexed { index, item ->
+                        val (container, content) = badges[index % badges.size]
+                        Surface(
+                            onClick = { open = false; onPick(item.source) },
+                            shape = itemShape(index, ATTACH_ITEMS.size),
+                            color = colors.surfaceContainerLowest,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                ShapeBadge(item.icon, size = 40.dp, containerColor = container, contentColor = content)
+                                Column(Modifier.padding(start = 14.dp)) {
+                                    Text(stringResource(item.label), style = MaterialTheme.typography.titleMediumEmphasized)
+                                    Text(stringResource(item.hint), style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
+
+private fun itemShape(index: Int, count: Int): RoundedCornerShape {
+    val top = if (index == 0) MENU_ITEM_OUTER else MENU_ITEM_INNER
+    val bottom = if (index == count - 1) MENU_ITEM_OUTER else MENU_ITEM_INNER
+    return RoundedCornerShape(topStart = top, topEnd = top, bottomStart = bottom, bottomEnd = bottom)
+}
+
+private val MENU_WIDTH = 264.dp
+private val MENU_OUTER_CORNER = 28.dp
+private val MENU_PADDING = 6.dp
+private val MENU_GAP = 2.dp
+private val MENU_ITEM_OUTER = 22.dp
+private val MENU_ITEM_INNER = 6.dp
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable

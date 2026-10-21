@@ -107,6 +107,12 @@
     <string name="tools_search_backend_html_hint">Parses DuckDuckGo HTML results. Works right away, but sometimes hits a captcha.</string>
     <string name="tools_search_backend_searxng_hint">Your own or a public instance. JSON format must be enabled in its settings.</string>
     <string name="tools_search_backend_brave_hint">Official API with a key: stable and captcha-free.</string>
+    <string name="tools_backend_firecrawl" translatable="false">Firecrawl</string>
+    <string name="tools_search_backend_firecrawl_hint">Firecrawl search API, in the cloud with a key or on your own server. Search and page reading share its address and key.</string>
+    <string name="tools_fetch_backend_firecrawl_hint">Firecrawl renders the page and returns its main content as markdown. Search and page reading share its address and key.</string>
+    <string name="tools_firecrawl_url">Firecrawl address</string>
+    <string name="tools_firecrawl_url_placeholder">https://api.firecrawl.dev or http://192.168.1.5:3002</string>
+    <string name="tools_firecrawl_api_key">API key (optional on your own server)</string>
     <string name="provider_base_url_invalid">Expected an address like https://host/v1</string>
     <string name="provider_models_fetch_failed">Couldn\'t load the model list</string>
     <string name="provider_title">Provider</string>
@@ -118,10 +124,16 @@
     <string name="api_format_anthropic" translatable="false">Anthropic</string>
     <string name="api_format_gemini" translatable="false">Gemini</string>
     <string name="api_format_elevenlabs" translatable="false">ElevenLabs</string>
+    <string name="settings_write_refused">Not saved: the stored settings could not be read. Nothing was overwritten.</string>
+    <string name="endpoint_https_required">Use https: over plain http the key would be sent unencrypted. Plain http is fine only for this phone or your local network.</string>
+    <string name="provider_header_name_invalid">Letters, digits and - only</string>
+    <string name="provider_header_value_invalid">Plain ASCII on one line only</string>
+    <string name="provider_preset">Preset</string>
     <string name="provider_format">API format</string>
     <string name="provider_format_hint">OpenAI also covers compatible servers like OpenRouter, Ollama and LM Studio</string>
     <string name="voice_provider_format_hint">Anthropic has no voice API, so only OpenAI, Gemini and ElevenLabs are here</string>
     <string name="provider_api_key">API key (Bearer)</string>
+    <string name="provider_api_keys_hint">One key per line. Requests rotate between keys and switch to the next key on rate limits or auth errors.</string>
     <string name="provider_fetch_models">Load models</string>
     <string name="provider_fetch_voices">Load voices</string>
     <string name="provider_voices_fetch_failed">Couldn\'t load the voice list</string>
@@ -183,11 +195,36 @@
     <string name="overlay_open_in_app">Open in app</string>
     <string name="chat_meta_duration_seconds">%1$.1f s</string>
     <string name="chat_meta_duration_minutes">%1$d min %2$02d s</string>
-    <string name="chat_meta_usage" translatable="false">↑ %1$s ↓ %2$s</string>
     <string name="chat_meta_tokens_thousands" translatable="false">%1$.1fk</string>
     <string name="chat_copy">Copy</string>
     <string name="chat_regenerate">Regenerate</string>
+    <string name="chat_edit">Edit</string>
+    <string name="chat_editing_message">Editing message</string>
+    <string name="chat_cancel_edit">Cancel editing</string>
+    <string name="chat_fork">New chat from here</string>
+    <string name="chat_fork_title">%1$s (fork)</string>
+    <string name="chat_fork_failed">Couldn\'t create the new chat</string>
+    <string name="chat_yolo">YOLO mode</string>
+    <string name="chat_yolo_hint">Run tools without asking until the app restarts</string>
     <string name="chat_scroll_to_bottom">Scroll to bottom</string>
+    <string name="camera_close">Close camera</string>
+    <string name="camera_switch">Switch camera</string>
+    <string name="camera_shutter">Take photo</string>
+    <string name="camera_flash_off">Flash off</string>
+    <string name="camera_flash_auto">Flash auto</string>
+    <string name="camera_flash_on">Flash on</string>
+    <string name="camera_retake">Retake</string>
+    <string name="camera_attach">Attach</string>
+    <string name="camera_error">Camera unavailable: %1$s</string>
+    <string name="camera_permission_denied">No camera access. Allow it in the app settings to take photos for the chat.</string>
+    <string name="camera_open_settings">Open settings</string>
+    <string name="camera_frame_full_short">Full</string>
+    <string name="chat_attach_camera">Camera</string>
+    <string name="chat_attach_photos">Photos</string>
+    <string name="chat_attach_files">Files</string>
+    <string name="chat_attach_camera_hint">Take a photo now</string>
+    <string name="chat_attach_photos_hint">Pick from your gallery</string>
+    <string name="chat_attach_files_hint">Documents and any other files</string>
     <string name="chat_attach_file">Attach file</string>
     <string name="chat_input_placeholder">Ask anything</string>
     <string name="chat_send">Send</string>
@@ -203,6 +240,7 @@
     <string name="common_back">Back</string>
     <string name="chat_error_unknown">Unknown error</string>
     <string name="chat_error_empty_response">The model returned an empty response</string>
+    <string name="chat_reply_truncated">The reply was cut off: the model reached its output limit. Ask it to continue.</string>
     <string name="chat_tool_arguments">Arguments</string>
     <string name="chat_tool_result">Result</string>
     <string name="chat_tool_cancelled_result">Not run: the reply was stopped</string>
@@ -248,6 +286,7 @@
     <string name="voice_settings_engine_hint_system">Uses the text-to-speech engine installed on the phone. Works offline.</string>
     <string name="voice_settings_engine_hint_provider">Uses the text-to-speech API of the speech provider picked below.</string>
     <string name="voice_settings_transcription_provider">Recognition provider</string>
+    <string name="voice_settings_chat_provider_label">%1$s (chat)</string>
     <string name="voice_settings_speech_provider">Speech provider</string>
     <string name="voice_provider_role_transcription">Recognition</string>
     <string name="voice_provider_role_speech">Speech</string>
@@ -274,6 +313,7 @@
     <string name="approval_allow">Allow</string>
     <string name="approval_deny">Deny</string>
     <string name="approval_allow_session">Always allow in this session</string>
+    <string name="approval_full_access">This runs with the app’s full access: it can read and change your chats, settings and saved keys, and any files the app can reach on the device, whatever the file access setting says. Check it before you allow it, it is asked for every time.</string>
     <string name="tools_permission_ask">Ask</string>
     <string name="tools_permission_auto">Auto</string>
     <string name="tools_search_hint">Search tools</string>
@@ -407,6 +447,8 @@
     <string name="model_filter_reasoning">Reasoning</string>
     <string name="model_filter_images">Image generation</string>
     <string name="model_empty">No models match</string>
+    <string name="model_empty_type_id">No models loaded. Type a model id in the search to use it</string>
+    <string name="model_use_custom">Use “%1$s”</string>
     <string name="model_context">%1$s context</string>
     <string name="model_reasoning">Reasoning effort</string>
     <string name="reasoning_default">Default</string>
@@ -454,6 +496,8 @@
     <string name="tools_category_memory">Memory</string>
     <string name="tools_memory_save_title">Remember facts</string>
     <string name="tools_memory_save_summary">Saves preferences and facts about you to instant or long-term memory</string>
+    <string name="tools_memory_list_title">List memories</string>
+    <string name="tools_memory_list_summary">Shows saved memories with their ids</string>
     <string name="tools_memory_update_title">Edit memories</string>
     <string name="tools_memory_update_summary">Rewrites a saved memory or moves it between instant and long-term</string>
     <string name="tools_memory_delete_title">Forget memories</string>
@@ -529,8 +573,17 @@
     <string name="access_group_elevated">Elevated access</string>
     <string name="access_section_backends">Access mode</string>
     <string name="tools_category_enabled">%1$d of %2$d on</string>
+    <string name="settings_chat">Chat</string>
+    <string name="settings_chat_summary">Token usage, titles, context compaction, typing</string>
+    <string name="chat_settings_section_camera">Camera</string>
+    <string name="chat_settings_camera_frame">Photo frame</string>
+    <string name="chat_settings_camera_frame_hint">Full screen keeps exactly what you see on the screen.</string>
+    <string name="camera_frame_full">Full screen</string>
+    <string name="camera_frame_16_9">16:9</string>
+    <string name="camera_frame_4_3">4:3</string>
+    <string name="chat_settings_section_context">Context</string>
     <string name="settings_appearance">Appearance</string>
-    <string name="settings_appearance_summary">Avatar, replies, vibration</string>
+    <string name="settings_appearance_summary">Chat list swipes, vibration</string>
     <string name="settings_models">Models</string>
     <string name="settings_models_summary">%1$s via %2$s</string>
     <string name="settings_models_summary_none">Add a provider to start chatting</string>
@@ -565,6 +618,19 @@
     <string name="chat_look_color">Color</string>
     <string name="chat_look_shape">Shape</string>
     <string name="chat_look_hint">The agent picks these after the first reply. Anything you set here stays.</string>
+    <string name="chat_settings_auto_compact">Compact long chats automatically</string>
+    <string name="chat_settings_auto_compact_summary">When a chat fills most of the model’s context, it is summarized before the next reply so the conversation can go on</string>
+    <string name="chat_settings_compact_at">Compact when the context is this full</string>
+    <string name="chat_compacted">Context compacted</string>
+    <string name="chat_compacted_show">Show summary</string>
+    <string name="chat_compacted_hide">Hide summary</string>
+    <string name="chat_compacting">Compacting the conversation…</string>
+    <string name="chat_context_title">Context</string>
+    <string name="chat_context_used">%1$s of %2$s tokens used (%3$d%%)</string>
+    <string name="chat_context_used_unknown_window">%1$s tokens used</string>
+    <string name="chat_context_estimated">Estimated until the next reply reports usage</string>
+    <string name="chat_context_compact">Compact now</string>
+    <string name="chat_context_compact_hint">Summarize the chat so far; the model continues from the summary</string>
     <string name="chat_settings_auto_title">Name chats automatically</string>
     <string name="chat_settings_auto_title_summary">After the first reply the model picks a short title, icon and color. Chats you renamed stay as they are.</string>
     <string name="tools_category_chats">Chats</string>
@@ -657,7 +723,7 @@
     <string name="phone_use_section_python">Python</string>
     <string name="phone_use_python">Python can control the phone</string>
     <string name="phone_use_python_summary">Scripts from the Run Python tool get a phone module to tap, type, scroll and wait, so long flows run in one go. Each script still asks for approval unless you allowed the tool for the chat. Off by default.</string>
-    <string name="approval_python_phone">This script controls the phone: it can tap, type and scroll in any app until it finishes. Check the code before you allow it.</string>
+    <string name="approval_python_phone">This script can control the phone: it can tap, type and scroll in any app until it finishes. Check the code before you allow it.</string>
     <string name="phone_use_sound_off">Off</string>
     <string name="phone_use_sound_soft_a">Soft tap 1</string>
     <string name="phone_use_sound_soft_b">Soft tap 2</string>
@@ -739,4 +805,39 @@
     <string name="files_error_delete">Could not delete</string>
     <string name="files_error_share">Could not share the files</string>
     <string name="files_error_name">That name can\'t be used</string>
+    <string name="files_error_open">Could not open %1$s</string>
+    <string name="files_error_load">Could not read the files</string>
+    <string name="chat_meta_tokens_in_out">in %1$s · out %2$s</string>
+    <string name="chat_meta_tokens_in_out_cached">in %1$s (cache %3$s) · out %2$s</string>
+    <string name="chat_meta_tokens_millions" translatable="false">%1$.1fM</string>
+    <string name="chat_meta_context">%1$d%% context</string>
+    <string name="settings_statistics">Statistics</string>
+    <string name="settings_statistics_summary">Tokens, cost and tool calls</string>
+    <string name="statistics_period_week">7 days</string>
+    <string name="statistics_period_month">30 days</string>
+    <string name="statistics_period_all">All time</string>
+    <string name="statistics_section_totals">Totals</string>
+    <string name="statistics_section_models">By model</string>
+    <string name="statistics_section_tools">Tools</string>
+    <string name="statistics_requests">Requests</string>
+    <string name="statistics_input">Input tokens</string>
+    <string name="statistics_output">Output tokens</string>
+    <string name="statistics_cached">Cached input tokens</string>
+    <string name="statistics_cost">Estimated cost</string>
+    <string name="statistics_cost_partial">%1$s, partial: some models have no price</string>
+    <string name="statistics_cost_unknown">Unknown, the models have no price</string>
+    <string name="statistics_chats">Chats</string>
+    <string name="statistics_messages">Your messages</string>
+    <string name="statistics_empty">Nothing was sent in this period.</string>
+    <string name="statistics_no_tools">No tool calls in this period.</string>
+    <string name="statistics_unknown_model">Unknown model</string>
+    <plurals name="statistics_request_count">
+        <item quantity="one">%d request</item>
+        <item quantity="other">%d requests</item>
+    </plurals>
+    <plurals name="statistics_call_count">
+        <item quantity="one">%d call</item>
+        <item quantity="other">%d calls</item>
+    </plurals>
+    <string name="statistics_failed_count">%1$d failed</string>
 </resources>

@@ -20,6 +20,7 @@ import dev.huecoder.md3agent.feature.files.MediaScreen
 import dev.huecoder.md3agent.feature.playground.PlaygroundScreen
 import dev.huecoder.md3agent.feature.settings.AboutScreen
 import dev.huecoder.md3agent.feature.settings.AppearanceScreen
+import dev.huecoder.md3agent.feature.settings.ChatSettingsScreen
 import dev.huecoder.md3agent.feature.settings.ModelsScreen
 import dev.huecoder.md3agent.feature.settings.RemindersScreen
 import dev.huecoder.md3agent.feature.settings.DeviceAccessScreen
@@ -28,6 +29,7 @@ import dev.huecoder.md3agent.feature.settings.MemorySettingsScreen
 import dev.huecoder.md3agent.feature.settings.NetworkSettingsScreen
 import dev.huecoder.md3agent.feature.settings.ProviderEditorScreen
 import dev.huecoder.md3agent.feature.settings.SettingsDestinations
+import dev.huecoder.md3agent.feature.settings.StatisticsScreen
 import dev.huecoder.md3agent.feature.settings.ToolSettingsScreen
 import dev.huecoder.md3agent.feature.settings.McpServerEditorScreen
 import dev.huecoder.md3agent.feature.settings.McpServersScreen
@@ -62,6 +64,7 @@ fun AppNavHost(chatToOpen: String?, onChatOpened: () -> Unit) {
                 settingsDestinations = SettingsDestinations(
                     models = { navController.navigate(ModelsRoute) },
                     appearance = { navController.navigate(AppearanceRoute) },
+                    chat = { navController.navigate(ChatSettingsRoute) },
                     about = { navController.navigate(AboutRoute) },
                     agent = { navController.navigate(AgentsRoute) },
                     memory = { navController.navigate(MemorySettingsRoute) },
@@ -72,12 +75,18 @@ fun AppNavHost(chatToOpen: String?, onChatOpened: () -> Unit) {
                     access = { navController.navigate(DeviceAccessRoute) },
                     phoneUse = { navController.navigate(PhoneUseRoute) },
                     mcp = { navController.navigate(McpServersRoute) },
+                    statistics = { navController.navigate(StatisticsRoute) },
                 ),
             )
         }
         screen<ChatRoute>(navController) { entry ->
             val route = entry.toRoute<ChatRoute>()
-            ChatScreen(chatId = route.chatId, focusMessageId = route.focusMessageId, onBack = navController::popBackStack)
+            ChatScreen(
+                chatId = route.chatId,
+                focusMessageId = route.focusMessageId,
+                onBack = navController::popBackStack,
+                onOpenChat = { navController.navigate(ChatRoute(it)) },
+            )
         }
         screen<ProviderEditorRoute>(navController) { entry ->
             ProviderEditorScreen(providerId = entry.toRoute<ProviderEditorRoute>().providerId, onDone = navController::popBackStack)
@@ -95,6 +104,8 @@ fun AppNavHost(chatToOpen: String?, onChatOpened: () -> Unit) {
         screen<DeviceAccessRoute>(navController) { DeviceAccessScreen(onBack = navController::popBackStack) }
         screen<PhoneUseRoute>(navController) { PhoneUseSettingsScreen(onBack = navController::popBackStack) }
         screen<AppearanceRoute>(navController) { AppearanceScreen(onBack = navController::popBackStack) }
+        screen<ChatSettingsRoute>(navController) { ChatSettingsScreen(onBack = navController::popBackStack) }
+        screen<StatisticsRoute>(navController) { StatisticsScreen(onBack = navController::popBackStack) }
         screen<AboutRoute>(navController) {
             AboutScreen(onBack = navController::popBackStack, onSecret = { navController.navigate(PlaygroundRoute) })
         }

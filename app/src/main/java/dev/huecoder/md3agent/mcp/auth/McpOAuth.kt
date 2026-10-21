@@ -2,6 +2,7 @@ package dev.huecoder.md3agent.mcp.auth
 
 import android.util.Base64
 import dev.huecoder.md3agent.data.settings.McpOAuthSession
+import dev.huecoder.md3agent.net.UrlPolicy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -63,9 +64,9 @@ class McpOAuth(private val http: () -> OkHttpClient, private val clock: () -> Lo
         val metadata = (wellKnown(issuer, AUTHORIZATION_SERVER) + wellKnown(issuer, OPENID_CONFIGURATION)).firstNotNullOfOrNull { fetchJson(it) }
             ?: throw McpOAuthException("The server does not publish how to sign in")
         return AuthServer(
-            authorizationEndpoint = metadata.string("authorization_endpoint") ?: throw McpOAuthException("No authorization endpoint"),
-            tokenEndpoint = metadata.string("token_endpoint") ?: throw McpOAuthException("No token endpoint"),
-            registrationEndpoint = metadata.string("registration_endpoint"),
+            authorizationEndpoint = metadata.endpoint("authorization_endpoint") ?: throw McpOAuthException("No valid authorization endpoint"),
+            tokenEndpoint = metadata.endpoint("token_endpoint") ?: throw McpOAuthException("No valid token endpoint"),
+            registrationEndpoint = metadata.endpoint("registration_endpoint"),
             scopes = (resourceMetadata?.get("scopes_supported") as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.contentOrNull },
             resource = resourceMetadata?.string("resource") ?: serverUrl.trim(),
         )
@@ -108,7 +109,7 @@ class McpOAuth(private val http: () -> OkHttpClient, private val clock: () -> Lo
             .apply { client.clientSecret?.let { add("client_secret", it) } }
             .build()
         val reply = post(Request.Builder().url(server.tokenEndpoint).post(form).build())
-        return session(reply, client, server.tokenEndpoint, previousRefresh = null)
+        return session(reply, client, server.tokenEndpoint, server.resource, previousRefresh = null)
     }
 
     suspend fun refresh(session: McpOAuthSession, resource: String): McpOAuthSession {
@@ -121,16 +122,17 @@ class McpOAuth(private val http: () -> OkHttpClient, private val clock: () -> Lo
             .apply { session.clientSecret?.let { add("client_secret", it) } }
             .build()
         val reply = post(Request.Builder().url(session.tokenEndpoint).post(form).build())
-        return session(reply, OAuthClient(session.clientId, session.clientSecret), session.tokenEndpoint, previousRefresh = refreshToken)
+        return session(reply, OAuthClient(session.clientId, session.clientSecret), session.tokenEndpoint, resource, previousRefresh = refreshToken)
     }
 
-    private fun session(reply: JsonObject, client: OAuthClient, tokenEndpoint: String, previousRefresh: String?) = McpOAuthSession(
+    private fun session(reply: JsonObject, client: OAuthClient, tokenEndpoint: String, resource: String, previousRefresh: String?) = McpOAuthSession(
         clientId = client.clientId,
         clientSecret = client.clientSecret,
         tokenEndpoint = tokenEndpoint,
         accessToken = reply.string("access_token") ?: throw McpOAuthException(reply.string("error_description") ?: "No access token in the reply"),
         refreshToken = reply.string("refresh_token") ?: previousRefresh,
         expiresAt = (reply["expires_in"] as? JsonPrimitive)?.longOrNull?.let { clock() + it * MS_PER_SECOND },
+        resource = resource,
     )
 
     private fun wellKnown(base: HttpUrl, suffix: String): List<String> {
@@ -161,6 +163,9 @@ class McpOAuth(private val http: () -> OkHttpClient, private val clock: () -> Lo
     }
 
     private fun JsonObject.string(name: String) = (this[name] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+
+    // Codes, tokens and client secrets travel to these endpoints in the body, so they get the same https rule as keys.
+    private fun JsonObject.endpoint(name: String) = string(name)?.takeIf { UrlPolicy.allowsCredentials(it) }
 
     private companion object {
         const val PROTECTED_RESOURCE = "oauth-protected-resource"

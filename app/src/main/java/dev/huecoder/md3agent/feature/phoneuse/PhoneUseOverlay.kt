@@ -246,6 +246,7 @@ class PhoneUseOverlay(private val service: AccessibilityService, private val con
         fun passTouches(areas: List<TouchArea>) {
             val passing = areas.isNotEmpty()
             shieldWindow.setTouchable(!passing)
+            modalWindow.setTouchable(!passing)
             val bounds = panelWindow.bounds()
             val gestureOverPanel = passing && (bounds == null || areas.any { it.inflated(touchSlopPx).intersects(bounds) })
             panelWindow.setTouchable(!gestureOverPanel)

@@ -151,6 +151,12 @@ private fun ColumnScope.ModelTab(
         },
         modifier = Modifier.weight(1f),
         listState = listState,
+        customId = state.customId,
+        onPickCustom = { id ->
+            viewModel.customSelection(id)?.let(onSelect)
+            onDismiss()
+        },
+        emptyText = if (state.totalCount == 0) R.string.model_empty_type_id else R.string.model_empty,
     )
 }
 

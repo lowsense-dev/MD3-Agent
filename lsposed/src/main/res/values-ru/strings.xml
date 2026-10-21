@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="module_description">Выбор действия для зажатия полоски жестов и кнопки питания вместо Breeno</string>
+
+    <string name="status_active">Модуль активен</string>
+    <string name="status_active_hint">Изменения применяются со следующего нажатия</string>
+    <string name="status_inactive">Модуль не активен</string>
+    <string name="status_inactive_hint">Включите Handle Assist в LSPosed для «Системный фреймворк» и «Системный интерфейс» и перезагрузите телефон</string>
+
+    <string name="trigger_handle">Зажатие полоски жестов</string>
+    <string name="trigger_power">Зажатие кнопки питания</string>
+
+    <string name="action_assistant">Помощник по умолчанию</string>
+    <string name="action_assistant_hint">Приложение, выбранное цифровым помощником</string>
+    <string name="action_circle_search">Circle to Search</string>
+    <string name="action_circle_search_hint">Поиск по экрану через Google</string>
+    <string name="action_app">Открыть приложение</string>
+    <string name="action_app_hint">Нажмите, чтобы выбрать</string>
+    <string name="action_power_menu">Меню питания</string>
+    <string name="action_power_menu_hint">Перезагрузка, выключение, SOS</string>
+    <string name="action_stock_handle">Как в системе</string>
+    <string name="action_stock_handle_hint">Распознавание экрана Breeno</string>
+    <string name="action_stock_power">Как в системе</string>
+    <string name="action_stock_power_hint">Голосовой Breeno</string>
+    <string name="action_none">Ничего не делать</string>
+    <string name="action_none_hint">Игнорировать зажатие</string>
+
+    <string name="picker_title">Выберите приложение</string>
+    <string name="picker_search">Поиск приложений</string>
+</resources>

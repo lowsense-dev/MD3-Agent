@@ -80,7 +80,7 @@ fun PhoneUseSettingsScreen(onBack: () -> Unit) {
     val save = draft?.let { current ->
         SaveAction(isDirty = current != saved, canSave = true) {
             scope.launch {
-                container.settings.updateTools { it.copy(phoneUse = current) }
+                if (!container.settings.updateTools { it.copy(phoneUse = current) }) return@launch
                 saved = current
                 onBack()
             }
@@ -306,7 +306,7 @@ private fun Card(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun PercentSlider(@StringRes title: Int, value: Float, range: ClosedFloatingPointRange<Float>, onChange: (Float) -> Unit) {
+internal fun PercentSlider(@StringRes title: Int, value: Float, range: ClosedFloatingPointRange<Float>, onChange: (Float) -> Unit) {
     val haptics = rememberHaptics()
     var dragged by remember(value) { mutableFloatStateOf(value) }
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {

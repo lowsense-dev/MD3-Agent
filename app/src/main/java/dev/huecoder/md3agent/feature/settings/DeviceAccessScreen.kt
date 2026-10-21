@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.content.pm.PackageManager
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -118,7 +119,11 @@ fun DeviceAccessScreen(onBack: () -> Unit) {
                 PermissionAction(R.string.access_action_grant) { askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS) }
             }
             DevicePermission.ALL_FILES -> PermissionAction(R.string.access_action_open_settings) { context.openAllFilesAccess() }.takeIf { status != AccessStatus.UNAVAILABLE }
-            DevicePermission.PHONE_CONTROL -> PermissionAction(R.string.access_action_open_settings) { context.openAccessibilitySettings() }
+            DevicePermission.PHONE_CONTROL -> if (context.canWriteSecureSettings()) {
+                PermissionAction(R.string.access_action_grant) { context.enablePhoneControlService() }
+            } else {
+                PermissionAction(R.string.access_action_open_settings) { context.openAccessibilitySettings() }
+            }
             DevicePermission.TERMUX -> when (status) {
                 AccessStatus.NOT_INSTALLED -> PermissionAction(R.string.access_action_install) { context.openUrl(TERMUX_URL) }
                 else -> PermissionAction(R.string.access_action_grant) { askTermux.launch(TermuxShell.PERMISSION) }
@@ -391,6 +396,23 @@ private fun Context.openAllFilesAccess() {
         startActivity(forApp)
     } catch (e: ActivityNotFoundException) {
         startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+    }
+}
+
+private fun Context.canWriteSecureSettings() =
+    checkSelfPermission(Manifest.permission.WRITE_SECURE_SETTINGS) == PackageManager.PERMISSION_GRANTED
+
+private fun Context.enablePhoneControlService() {
+    val service = ComponentName(this, PhoneControlService::class.java).flattenToString()
+    val enabled = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).orEmpty()
+    val services = enabled.split(':').filter { it.isNotBlank() }
+    try {
+        if (services.none { it.equals(service, ignoreCase = true) }) {
+            Settings.Secure.putString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, (services + service).joinToString(":"))
+        }
+        Settings.Secure.putInt(contentResolver, Settings.Secure.ACCESSIBILITY_ENABLED, 1)
+    } catch (e: SecurityException) {
+        openAccessibilitySettings()
     }
 }
 

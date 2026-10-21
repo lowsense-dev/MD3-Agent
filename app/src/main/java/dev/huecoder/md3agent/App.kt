@@ -10,6 +10,8 @@ class App : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // The :python process only hosts PythonService; the app's database, settings and jobs live in the main process.
+        if (getProcessName() != packageName) return
         container = AppContainer(this)
         registerActivityLifecycleCallbacks(container.visibility)
         AppNotifications.registerChannels(this)

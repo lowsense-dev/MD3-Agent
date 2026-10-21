@@ -29,6 +29,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.composables.icons.materialsymbols.MaterialSymbols
 import com.composables.icons.materialsymbols.rounded.Open_in_new
@@ -71,6 +73,8 @@ fun AssistantOverlay(activation: Int, onDismiss: () -> Unit, onOpenInApp: (chatI
         },
         onPermissionMissing = { dictationModel.fail(UiText.Resource(R.string.overlay_microphone_denied)) },
     )
+    // The session stops this lifecycle when the sheet is dismissed; the microphone must not outlive the sheet.
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { dictationModel.cancel() }
     val focusRequester = remember { FocusRequester() }
     val sheet = rememberAssistantSheetState(activation)
     val sendEntrance = remember(activation) { SendEntrance() }

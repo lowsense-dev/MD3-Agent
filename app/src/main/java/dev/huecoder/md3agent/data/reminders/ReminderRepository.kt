@@ -44,8 +44,7 @@ class ReminderRepository(
 
     suspend fun fire(id: String) {
         val reminder = dao.get(id) ?: return
-        alarms.notify(reminder)
-        dao.delete(id)
+        if (dao.delete(id) > 0) alarms.notify(reminder)
     }
 
     suspend fun restore() {

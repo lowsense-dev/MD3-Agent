@@ -2,6 +2,7 @@ package dev.huecoder.md3agent.tools.system
 
 import android.content.ContextWrapper
 import dev.huecoder.md3agent.data.settings.PhoneUseSettings
+import dev.huecoder.md3agent.data.settings.ToolPermission
 import dev.huecoder.md3agent.data.settings.ToolSettings
 import dev.huecoder.md3agent.system.control.ElementSelector
 import dev.huecoder.md3agent.system.control.PhoneReport
@@ -9,6 +10,7 @@ import dev.huecoder.md3agent.system.control.PhoneRequest
 import dev.huecoder.md3agent.system.control.ScreenReading
 import dev.huecoder.md3agent.system.control.ScriptPhone
 import dev.huecoder.md3agent.system.python.PythonRuntime
+import dev.huecoder.md3agent.tools.phone.PhoneActionTool
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -91,5 +93,15 @@ class RunPythonToolTest {
 
         assertTrue(outcome.isError)
         assertTrue(outcome.content.contains("inside a chat"))
+    }
+
+    @Test
+    fun `phone bridge needs python control and phone_action not turned off`() {
+        val on = ToolSettings(phoneUse = PhoneUseSettings(pythonControl = true))
+
+        assertTrue(RunPythonTool.phoneBridgeOn(on))
+        assertFalse(RunPythonTool.phoneBridgeOn(ToolSettings()))
+        assertFalse(RunPythonTool.phoneBridgeOn(on.withPermission(PhoneActionTool.NAME, ToolPermission.OFF)))
+        assertNull(tool.promptNote(on.withPermission(PhoneActionTool.NAME, ToolPermission.OFF)))
     }
 }

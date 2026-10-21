@@ -10,6 +10,7 @@ import dev.huecoder.md3agent.tools.objectSchema
 import dev.huecoder.md3agent.tools.optionalInt
 import dev.huecoder.md3agent.tools.requireString
 import dev.huecoder.md3agent.tools.stringProperty
+import dev.huecoder.md3agent.tools.untrusted
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -30,9 +31,9 @@ class WebSearchTool(private val searcher: WebSearcher) : Tool {
     override suspend fun execute(arguments: JsonObject, settings: ToolSettings): ToolOutcome {
         val query = arguments.requireString("query")
         val count = (arguments.optionalInt("count") ?: DEFAULT_RESULTS).coerceIn(1, MAX_RESULTS)
-        val hits = searcher.search(query, count, settings.search)
+        val hits = searcher.search(query, count, settings.search, settings.firecrawl)
         if (hits.isEmpty()) return ToolOutcome.error("Nothing found for \"$query\"")
-        return ToolOutcome(json.encodeToString(SearchResults.serializer(), SearchResults(query, hits)))
+        return ToolOutcome(untrusted("web search", json.encodeToString(SearchResults.serializer(), SearchResults(query, hits))))
     }
 
     companion object {
@@ -57,13 +58,13 @@ class ReadWebpageTool(private val fetcher: PageFetcher) : Tool {
         val raw = arguments.requireString("url")
         val url = raw.toHttpUrlOrNull() ?: throw ToolArgumentException("Not an http(s) address: \"$raw\"")
         val offset = (arguments.optionalInt("offset") ?: 0).coerceAtLeast(0)
-        val page = fetcher.fetch(url, settings.fetch)
+        val page = fetcher.fetch(url, settings.fetch, settings.firecrawl)
         if (page.text.isBlank()) return ToolOutcome.error("The page has no text (it may be rendered by scripts)")
         if (offset >= page.text.length) return ToolOutcome.error("Offset $offset is past the end of the page (${page.text.length} characters)")
         val end = minOf(offset + MAX_TEXT_CHARS, page.text.length)
         val tail = if (end < page.text.length) "\n\n…[truncated at ${end} of ${page.text.length} characters, continue with offset=$end]" else ""
         val header = listOfNotNull(page.title?.let { "# $it" }, url.toString())
-        return ToolOutcome((header + (page.text.substring(offset, end) + tail)).joinToString("\n\n"))
+        return ToolOutcome((header + untrusted(url.host, page.text.substring(offset, end)) + tail.trim()).filter { it.isNotEmpty() }.joinToString("\n\n"))
     }
 
     companion object {

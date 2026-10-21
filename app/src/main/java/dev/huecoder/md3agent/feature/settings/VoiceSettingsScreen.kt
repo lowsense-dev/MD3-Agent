@@ -21,6 +21,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -35,8 +36,10 @@ import com.composables.icons.materialsymbols.rounded.Add
 import com.composables.icons.materialsymbols.rounded.Graphic_eq
 import dev.huecoder.md3agent.R
 import dev.huecoder.md3agent.data.settings.InvokeInput
+import dev.huecoder.md3agent.data.settings.ProviderProfile
 import dev.huecoder.md3agent.data.settings.SpeakReplies
 import dev.huecoder.md3agent.data.settings.SpeechOutput
+import dev.huecoder.md3agent.data.settings.VoiceProvider
 import dev.huecoder.md3agent.data.settings.VoiceSettings
 import dev.huecoder.md3agent.ui.components.FormField
 import dev.huecoder.md3agent.ui.components.SectionHeader
@@ -58,16 +61,24 @@ fun VoiceSettingsScreen(onBack: () -> Unit, onEditProvider: (providerId: String?
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = padding.calculateTopPadding(), bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
         ) {
+            val chatProviders = settings?.providers.orEmpty()
+            val dictationChat = voice.transcriptionChatProvider(chatProviders)
             item { SectionHeader(stringResource(R.string.voice_settings_section_providers)) }
             item { Hint(stringResource(R.string.voice_settings_providers_hint)) }
-            voiceProviderItems(voice, onEditProvider)
+            voiceProviderItems(voice, dictationChat == null, onEditProvider)
 
             item { SectionHeader(stringResource(R.string.dictation_settings_section)) }
             item {
                 SettingsBlock {
-                    if (voice.providers.isNotEmpty()) {
-                        ProviderDropdown(R.string.voice_settings_transcription_provider, voice, voice.transcriptionProvider?.id) { id ->
-                            viewModel.updateVoice { it.copy(activeProviderId = id) }
+                    DictationProviderDropdown(voice, chatProviders) { transform -> viewModel.updateVoice(transform) }
+                    if (dictationChat != null) {
+                        key(dictationChat.id) {
+                            DelayedField(
+                                saved = voice.transcriptionChatModel,
+                                onCommit = { model -> viewModel.updateVoice { it.copy(transcriptionChatModel = model) } },
+                                label = stringResource(R.string.voice_provider_transcription_model),
+                                placeholder = VoiceProvider.defaultTranscriptionModel(dictationChat.format),
+                            )
                         }
                     }
                     LanguageField(voice.language) { language -> viewModel.updateVoice { it.copy(language = language) } }
@@ -108,9 +119,9 @@ fun VoiceSettingsScreen(onBack: () -> Unit, onEditProvider: (providerId: String?
     }
 }
 
-private fun LazyListScope.voiceProviderItems(voice: VoiceSettings, onEditProvider: (String?) -> Unit) {
+private fun LazyListScope.voiceProviderItems(voice: VoiceSettings, transcribesHere: Boolean, onEditProvider: (String?) -> Unit) {
     val count = voice.providers.size + 1
-    val transcriptionId = voice.transcriptionProvider?.id
+    val transcriptionId = voice.transcriptionProvider?.id?.takeIf { transcribesHere }
     val speechId = voice.speechProvider?.id.takeIf { voice.speechOutput == SpeechOutput.PROVIDER }
     itemsIndexed(voice.providers, key = { _, provider -> "voice-${provider.id}" }) { index, provider ->
         SegmentedListItem(
@@ -160,6 +171,17 @@ private fun Hint(text: String) {
 
 @Composable
 private fun LanguageField(saved: String, onCommit: (String) -> Unit) {
+    DelayedField(
+        saved = saved,
+        onCommit = onCommit,
+        label = stringResource(R.string.dictation_settings_language),
+        placeholder = stringResource(R.string.dictation_settings_language_placeholder),
+        supportingText = stringResource(R.string.dictation_settings_language_hint),
+    )
+}
+
+@Composable
+private fun DelayedField(saved: String, onCommit: (String) -> Unit, label: String, placeholder: String, supportingText: String? = null) {
     var text by rememberSaveable { mutableStateOf(saved) }
     val commit by rememberUpdatedState { if (text.trim() != saved) onCommit(text.trim()) }
     LaunchedEffect(text) {
@@ -170,9 +192,34 @@ private fun LanguageField(saved: String, onCommit: (String) -> Unit) {
     FormField(
         value = text,
         onValueChange = { text = it },
-        label = stringResource(R.string.dictation_settings_language),
-        placeholder = stringResource(R.string.dictation_settings_language_placeholder),
-        supportingText = stringResource(R.string.dictation_settings_language_hint),
+        label = label,
+        placeholder = placeholder,
+        supportingText = supportingText,
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
+
+@Composable
+private fun DictationProviderDropdown(voice: VoiceSettings, chatProviders: List<ProviderProfile>, update: ((VoiceSettings) -> VoiceSettings) -> Unit) {
+    val eligible = chatProviders.filter { VoiceSettings.transcribes(it) }
+    if (voice.providers.isEmpty() && eligible.isEmpty()) return
+    val options = voice.providers.map { DropdownOption(it.id, it.name) } +
+        eligible.map { DropdownOption(CHAT_PREFIX + it.id, stringResource(R.string.voice_settings_chat_provider_label, it.name)) }
+    val selected = voice.transcriptionChatProvider(chatProviders)?.let { CHAT_PREFIX + it.id } ?: voice.transcriptionProvider?.id
+    OptionDropdown(
+        label = stringResource(R.string.voice_settings_transcription_provider),
+        options = options,
+        selected = selected,
+        onSelect = { value ->
+            val chatId = value.removePrefix(CHAT_PREFIX).takeIf { value.startsWith(CHAT_PREFIX) }
+            update { current ->
+                when {
+                    chatId == null -> current.copy(activeProviderId = value, transcriptionChatProviderId = null)
+                    chatId == current.transcriptionChatProviderId -> current
+                    else -> current.copy(transcriptionChatProviderId = chatId, transcriptionChatModel = "")
+                }
+            }
+        },
         modifier = Modifier.fillMaxWidth(),
     )
 }
@@ -195,6 +242,7 @@ private fun outputHint(voice: VoiceSettings): Int = when {
 }
 
 private const val COMMIT_DELAY_MS = 400L
+private const val CHAT_PREFIX = "chat:"
 
 private val INVOKE_CHOICES = listOf(
     Choice(InvokeInput.TEXT, R.string.voice_settings_invoke_text),

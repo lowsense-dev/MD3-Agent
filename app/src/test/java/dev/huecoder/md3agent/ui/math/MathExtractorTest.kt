@@ -58,4 +58,10 @@ class MathExtractorTest {
         val result = extract("bad ${'$'}\\oops${'$'} ok ${'$'}x${'$'}") { it.latex != "\\oops" }
         assertEquals("bad ${'$'}\\oops${'$'} ok MATHSLOT0X", result.markdown)
     }
+
+    @Test
+    fun `indented fences and double backtick spans are left alone`() {
+        val text = "``a`${'$'}x${'$'}`b`` and\n   ~~~\n${'$'}y${'$'}\n   ~~~\n    ```\n${'$'}z${'$'}"
+        assertEquals("``a`${'$'}x${'$'}`b`` and\n   ~~~\n${'$'}y${'$'}\n   ~~~\n    ```\nMATHSLOT0X", extract(text).markdown)
+    }
 }

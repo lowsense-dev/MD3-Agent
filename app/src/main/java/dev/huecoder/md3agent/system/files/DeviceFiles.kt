@@ -11,6 +11,8 @@ import java.util.UUID
 
 class FileAccessException(message: String) : IllegalStateException(message)
 
+fun sharedStorageGranted(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && Environment.isExternalStorageManager()
+
 data class FileEntry(val name: String, val isDirectory: Boolean, val sizeBytes: Long, val modifiedAt: Long)
 
 class DeviceFiles(
@@ -26,7 +28,7 @@ class DeviceFiles(
     val uploads: File by lazy { uploads.apply { mkdirs() }.canonicalFile }
     val sharedStoragePath: String get() = sharedStorage.path
 
-    fun hasSharedStorageAccess(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && Environment.isExternalStorageManager()
+    fun hasSharedStorageAccess(): Boolean = sharedStorageGranted()
 
     fun resolve(raw: String): File {
         val path = raw.trim().ifEmpty { "." }

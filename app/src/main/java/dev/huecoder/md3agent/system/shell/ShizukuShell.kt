@@ -6,7 +6,6 @@ import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.IBinder
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -14,6 +13,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import rikka.shizuku.Shizuku
 import java.io.File
+import kotlin.concurrent.thread
 import kotlin.coroutines.resume
 import kotlin.system.exitProcess
 
@@ -58,7 +58,14 @@ class ShizukuShell(context: Context) : Shell {
             else -> Unit
         }
         val remote = connect()
-        return runInterruptible(Dispatchers.IO) { ShellResult.fromBundle(remote.run(command, timeoutMs)) }
+        // a blocked binder call ignores interrupts, so cancelling ends the remote service instead
+        return suspendCancellableCoroutine { continuation ->
+            continuation.invokeOnCancellation {
+                service = null
+                thread { runCatching { remote.destroy() } }
+            }
+            thread { continuation.resumeWith(runCatching { ShellResult.fromBundle(remote.run(command, timeoutMs)) }) }
+        }
     }
 
     private suspend fun connect(): IShellService = connectLock.withLock {

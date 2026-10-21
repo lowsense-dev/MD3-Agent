@@ -176,6 +176,19 @@ class FileLibraryTest {
     }
 
     @Test
+    fun `deleting a picture never touches copies behind a symlink`() = runTest {
+        val camera = temp.newFolder("camera").also { File(it, "cat.png").withBytes("cat") }
+        Files.createSymbolicLink(File(workspace, "phone").toPath(), camera.toPath())
+        Files.createSymbolicLink(File(workspace, "cat-link.png").toPath(), File(camera, "cat.png").toPath())
+        File(uploads, "cat.png").withBytes("cat")
+
+        library.deleteMedia(library.media())
+
+        assertTrue(library.media().isEmpty())
+        assertEquals("cat", File(camera, "cat.png").readText())
+    }
+
+    @Test
     fun `deleting something that is already gone is not an error`() = runTest {
         File(uploads, "gone.txt").withBytes("x")
         val location = LibraryLocation(LibraryRoot.MINE)

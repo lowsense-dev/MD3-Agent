@@ -15,18 +15,26 @@ class ScrollSearch(
     suspend fun run(directions: List<SwipeDirection>, maxSwipes: Int): SearchOutcome {
         if (isVisible()) return SearchOutcome.Found(0)
         var swipes = 0
-        for (direction in directions) {
+        var limited = false
+        val share = (maxSwipes / directions.size.coerceAtLeast(1)).coerceAtLeast(1)
+        for ((index, direction) in directions.withIndex()) {
+            val limit = if (index == directions.lastIndex) maxSwipes else minOf(maxSwipes, swipes + share)
             var before = fingerprint()
-            while (swipes < maxSwipes) {
+            var ended = false
+            while (swipes < limit) {
                 if (!scrollOnce(direction)) return SearchOutcome.GestureFailed(swipes)
                 swipes++
                 if (isVisible()) return SearchOutcome.Found(swipes)
                 val after = fingerprint()
-                if (after == before) break
+                if (after == before) {
+                    ended = true
+                    break
+                }
                 before = after
             }
             if (swipes >= maxSwipes) return SearchOutcome.LimitReached(swipes)
+            if (!ended) limited = true
         }
-        return SearchOutcome.EndReached(swipes)
+        return if (limited) SearchOutcome.LimitReached(swipes) else SearchOutcome.EndReached(swipes)
     }
 }
